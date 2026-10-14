@@ -1,0 +1,15 @@
+apiVersion: packages.example/v1alpha1
+kind: PackageDefinition
+metadata:
+  name: vscode
+  version: "1.135.0"
+artifact:
+  repository: packages
+  path: .\vscode\1.135.0
+  filename: VSCodeUserSetup-x64-1.135.0.exe
+  sha256: "a981351f704671fe6f3305a6dfe21a9693bd28cb50548306f419d337a7f5f32f"
+  sizeBytes: 231675016
+install:
+  handler: exe
+  timeout: 20m
+  successExitCodes: [0]

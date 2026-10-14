@@ -1,0 +1,37 @@
+test:download:
+  image: registry.example.test/images/runner-image:0.2.1
+  tags:
+    - shared-medium
+  script:
+    - echo "Testing download script"
+    - whoami
+    - download-packages --lock ./windows-vm.lock.yaml
+    - ls
+    - ls ./packages
+
+test:image:
+  image: registry.example.test/images/runner-image:0.2.1
+  tags:
+    - shared-medium
+  script:
+    - |
+      echo "Testing installed items on image"
+      echo "--------------------------------"
+    - | 
+      echo "Packer"
+      packer version
+      echo "--------------------------------"
+    - |
+      echo "yq"
+      yq --version
+      echo "--------------------------------"
+    - |
+      echo "govc"
+      govc version
+      echo "--------------------------------"
+    - |
+      echo "download-packages"
+      download-packages
+      echo "--------------------------------"
+
+  

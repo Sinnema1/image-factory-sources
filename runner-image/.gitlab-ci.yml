@@ -1,0 +1,4 @@
+include: 
+  project: image-factory-group/ci-platform
+  ref: "main"
+  file: templates/pipeline.yml

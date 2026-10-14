@@ -1,0 +1,10 @@
+{
+  "filename": "windows-11-enterprise-25h2-x64.iso",
+  "datastore": "datastore-01",
+  "datastorePath": "image-factory/iso/windows-11-enterprise-25h2-x64.iso",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "sizeBytes": 8589934592,
+  "originPath": "\\\\fileshare\\shared\\image-factory\\windows-iso\\windows-11-enterprise-25h2-x64.iso",
+  "description": "Windows 11 25H2 Business Edition (EN-US) ISO for Packer vSphere builds.",
+  "qualifiedOn": "2026-09-23"
+}

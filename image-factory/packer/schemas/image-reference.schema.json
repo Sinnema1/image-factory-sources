@@ -1,0 +1,217 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Image Reference",
+  "description": "The record a published master image is consumed through (STORY-11, ADR 0005). It says which vSphere VM and snapshot the image is, which build made it, and which evidence shows how. Downstream Terraform and Citrix work reads this file; nothing downstream should find the image any other way. scripts/runner/image-reference.sh writes it and checks it. That script reads the top-level `required` list from this file and enforces the patterns below with its own rules; the rest of this file is the contract in words, for a reader.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "version",
+    "vm",
+    "snapshot",
+    "build",
+    "source",
+    "seal",
+    "evidence_index_sha256",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bumped when this record changes shape"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[A-Za-z0-9]+$",
+      "description": "The image version: the UTC date of the build and the pipeline job id that ran it, for example 2026.10.08-4294. Unique per build, and it sorts by date. The VM and snapshot names carry it"
+    },
+    "vm": {
+      "type": "object",
+      "description": "The master VM. It is powered off and is never started by a consumer",
+      "required": [
+        "instance_uuid",
+        "name",
+        "datacenter",
+        "folder"
+      ],
+      "properties": {
+        "instance_uuid": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "The vCenter instance UUID. This, with the snapshot, is the image's identity: look the VM up by this value, not by name. It is not the BIOS UUID, which a clone inherits"
+        },
+        "name": {
+          "type": "string",
+          "description": "The VM's name, which ends with the version"
+        },
+        "datacenter": {
+          "type": "string",
+          "description": "The vSphere datacenter the VM is in"
+        },
+        "folder": {
+          "type": "string",
+          "description": "The VM's inventory folder, as a path from the root"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "description": "The snapshot desktops are created from. Taken after the image was sealed and powered off, and only then",
+      "required": [
+        "name",
+        "id"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The snapshot's name, which ends with the version"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^snapshot-[0-9]+$",
+          "description": "The snapshot's vCenter managed object id. It is assigned by this vCenter and is only meaningful there"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "description": "The pipeline run that produced the image, and where its evidence is kept",
+      "required": [
+        "pipeline_id",
+        "job_id",
+        "commit",
+        "ref",
+        "timestamp"
+      ],
+      "properties": {
+        "pipeline_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The job that holds the evidence as its artifacts"
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The GitLab project the job belongs to, as a path. A job id means nothing without it"
+        },
+        "job_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The job's address. The evidence files named in this record are its artifacts, under evidence/. Artifacts expire, so this address can outlive what it points at"
+        },
+        "commit": {
+          "type": "string",
+          "description": "The commit of this repository the image was built from"
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The branch the image was published from. Publishing is refused from any branch but the default one unless it is explicitly allowed for a test, so anything else here marks a test image"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "When the record was written, UTC"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "The installation media the image was built from",
+      "required": [
+        "isos"
+      ],
+      "properties": {
+        "isos": {
+          "type": "array",
+          "minItems": 1,
+          "description": "One entry per ISO record the build used. Each passed the datastore check (ADR 0004, stage 2) in the same job, before the build started",
+          "items": {
+            "type": "object",
+            "required": [
+              "record",
+              "filename",
+              "sha256",
+              "stage2_evidence"
+            ],
+            "properties": {
+              "record": {
+                "type": "string",
+                "description": "The ISO record in packer/sources/windows/"
+              },
+              "filename": {
+                "type": "string",
+                "description": "The ISO's file name. For the Windows ISO it states the edition, version and update level, which is how the source Windows version is recorded"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$",
+                "description": "The qualified SHA-256 from the record, which the datastore copy matched"
+              },
+              "stage2_evidence": {
+                "type": "string",
+                "description": "The evidence file of the passing datastore check"
+              }
+            }
+          }
+        }
+      }
+    },
+    "seal": {
+      "type": "object",
+      "description": "The seal that ran before the snapshot (ADR 0002)",
+      "required": [
+        "sealed",
+        "evidence"
+      ],
+      "properties": {
+        "sealed": {
+          "type": "boolean",
+          "const": true
+        },
+        "evidence": {
+          "type": "string",
+          "description": "The seal result file"
+        }
+      }
+    },
+    "evidence_index_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "The SHA-256 of the build's final evidence index, index.json. It ties this record to the exact build evidence. It is NOT a hash of the image and is never called a checksum (ADR 0005): nothing hashes the VM's disks"
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Where the evidence is. This record is the one evidence file the index does not list, because it carries the index's hash",
+      "required": [
+        "index",
+        "sha256sums"
+      ],
+      "properties": {
+        "index": {
+          "type": "string"
+        },
+        "sha256sums": {
+          "type": "string"
+        },
+        "snapshot": {
+          "type": "string",
+          "description": "The evidence file written when the snapshot was taken"
+        }
+      }
+    }
+  }
+}

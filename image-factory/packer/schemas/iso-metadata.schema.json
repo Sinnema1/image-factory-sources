@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ISO Metadata",
+  "description": "Contract for a qualified ISO consumed by Packer vSphere builds. The datastore is the authoritative library (see ADR 0004), so the required fields describe the datastore item. sha256 is the single qualified hash: the intake copy and the published datastore copy must both match it. Note that scripts/runner/validate-iso-metadata.sh reads only the `required` list from this file; the types and patterns below are documentation until something validates against them properly.",
+  "type": "object",
+  "properties": {
+    "filename": {
+      "type": "string",
+      "description": "The exact filename of the ISO, identical in both locations"
+    },
+    "datastore": {
+      "type": "string",
+      "description": "Name of the vSphere datastore holding the published ISO, without brackets (for example datastore-01)"
+    },
+    "datastorePath": {
+      "type": "string",
+      "description": "Path to the ISO within that datastore, without the [datastore] prefix (for example image-factory/iso/windows.iso). Packer's bracket form is composed from datastore + datastorePath rather than stored, so nothing has to parse or escape brackets."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$",
+      "description": "The qualified SHA-256. Both the intake copy and the published datastore copy are verified against this one value"
+    },
+    "sizeBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The exact size of the ISO in bytes"
+    },
+    "originPath": {
+      "type": "string",
+      "description": "The intake copy: where the ISO sat, under the same filename, before it was published to the datastore, typically the intake share. Stage 1 (scripts/runner/verify-iso.sh) reads this to locate that copy unless --source-path overrides it, and requires its file name to equal filename. It is not what the build boots. For an ISO that arrived inside a vendor archive under another name, use origin instead"
+    },
+    "origin": {
+      "type": "object",
+      "description": "Provenance for an ISO delivered inside a vendor archive, where the ISO has a different name (so originPath and stage 1 cannot describe it). Records the archive and the member path; the member's SHA-256 equals sha256, verified on verifiedOn. Nothing reads this to locate a file",
+      "properties": {
+        "vendor": { "type": "string", "description": "Where the archive was obtained, for example a vendor support portal" },
+        "archive": { "type": "string", "description": "Path of the archive as kept on the intake share" },
+        "archiveSha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "description": "SHA-256 of the archive itself, to compare with a checksum the vendor publishes" },
+        "member": { "type": "string", "description": "Path of the ISO inside the archive" },
+        "version": { "type": "string" },
+        "build": { "type": "string" },
+        "verifiedOn": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "Date the member's SHA-256 was checked against sha256" }
+      },
+      "required": ["archive", "archiveSha256", "member"]
+    },
+    "qualifiedOn": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Date the datastore copy first passed stage 2 against sha256, the qualification date (YYYY-MM-DD)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the ISO"
+    }
+  },
+  "required": ["filename", "datastore", "datastorePath", "sha256", "sizeBytes"]
+}

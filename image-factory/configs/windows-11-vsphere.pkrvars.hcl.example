@@ -1,0 +1,86 @@
+# Example variable file for packer/templates/windows-11-vsphere.pkr.hcl
+#
+# Copy this file to configs/windows-11-vsphere.pkrvars.hcl for local runs. That
+# file is not tracked in git. In CI its content is stored as the
+# PACKER_VARS_FILE file variable. Replace placeholders with real non-secret
+# values.
+#
+# The template reads these from environment variables (CI variables or .env),
+# so they are not set here:
+#   VCENTER_HOST
+#   VCENTER_USERNAME
+#   VCENTER_PASSWORD
+#   ADMIN_SERVICE_ACCOUNT
+#   ADMIN_SERVICE_ACCOUNT_PASSWORD
+#   AD_DOMAIN
+#   AD_NETBIOS_DOMAIN
+#   PACKER_RUNNER_SOURCE_IP
+#   ADMIN_GROUP_SID
+#   ADMIN_GROUP_NAME
+#
+# A value set in this file overrides the matching environment variable, which
+# can hide the CI variable. Set vcenter_host, vcenter_username and
+# packer_runner_source_ip here only for a deliberate local override.
+
+vcenter_insecure_connection = false
+
+datacenter            = "REPLACE_WITH_DATACENTER"
+cluster               = "REPLACE_WITH_CLUSTER"
+datastore             = "REPLACE_WITH_DATASTORE"
+network               = "REPLACE_WITH_NETWORK"
+vm_folder             = "REPLACE_WITH_VM_FOLDER"
+vm_name               = "REPLACE_WITH_VM_NAME"
+windows_computer_name = "REPLACE_WITH_WINDOWS_COMPUTER_NAME"
+
+# The ISO paths are not set here. The template reads them from the qualification
+# records in packer/sources/windows/ (ADR 0004), so the build boots the item that
+# was qualified. iso_source_path and vmware_tools_iso_path were removed on
+# 2026-09-24; an older copy of this file that still sets them is accepted with an
+# "Undefined variable" warning and the values are ignored. Delete them rather
+# than edit them — changing them changes nothing.
+#
+# Which records are read is set here, per environment. Both default to the lab's
+# records, so the lab leaves them unset. Another environment names its own
+# records, measured from its own datastore copies (file names only, in
+# packer/sources/windows/):
+# windows_iso_record      = "windows-11.json"
+# vmware_tools_iso_record = "vmware-tools.json"
+
+# Optional. How long Packer waits for WinRM after the guest reports an IP
+# address. The template default is 45m; diagnostic runs can shorten it.
+# winrm_timeout = "15m"
+
+# Optional. Windows first-run setup (OOBE). The time zone is a Windows time zone
+# ID, not an IANA name; the setup account is the local administrator the answer
+# file creates to finish OOBE, deleted again by the guest cleanup. The template
+# defaults are shown.
+# windows_time_zone  = "UTC"
+# setup_account_name = "pkr-setup"
+
+# The domain group given local administrator rights in the guest. Supply these
+# as ADMIN_GROUP_SID and ADMIN_GROUP_NAME (CI variables or .env) rather than
+# here; they are recorded below so the lab values are written down somewhere a
+# reader can find them. Neither is a secret.
+#
+# The SID is what the bootstrap acts on, so it must be correct. The name is only
+# printed to the guest's build log and is never resolved.
+#
+# Provenance (OBSERVED, 2026-09-22). The SID was produced by resolving the group
+# on a temporary domain-joined Packer VM (packer-build-002), after
+# confirming PartOfDomain, Domain = example.test, Test-ComputerSecureChannel and
+# domain controller discovery:
+#
+#   [System.Security.Principal.NTAccount]::new('EXAMPLE', 'VDI_BUILD_ADMINS').
+#       Translate([System.Security.Principal.SecurityIdentifier])
+#
+# It was verified after a build by Get-LocalGroupMember -Group 'Administrators',
+# which returned EXAMPLE\VDI_BUILD_ADMINS with PrincipalSource ActiveDirectory and
+# this SID.
+#
+# DO NOT COPY THESE VALUES TO ANOTHER ENVIRONMENT. The SID is bound to the
+# VDI_BUILD_ADMINS object in the EXAMPLE domain and is meaningless elsewhere. A
+# second environment (for example Site B) must resolve and approve its own
+# administrative group, and supply its own SID, by the command above.
+#
+# admin_group_sid  = "S-1-5-21-1111111111-2222222222-3333333333-1104"
+# admin_group_name = "EXAMPLE\\VDI_BUILD_ADMINS"

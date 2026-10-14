@@ -1,0 +1,48 @@
+{
+  "apiVersion": "image.example/v1alpha1",
+  "kind": "ImageRecipeLock",
+  "metadata": {
+    "name": "windows-vm-fixture",
+    "version": "0.0.3",
+    "generatedAt": "2026-10-07T00:00:00Z"
+  },
+  "target": {
+    "platform": "windows",
+    "release": "11",
+    "architecture": "amd64",
+    "imageType": "vm"
+  },
+  "defaults": {
+    "failurePolicy": "fail"
+  },
+  "packages": [
+    {
+      "name": "testpkg",
+      "version": "1.0.0",
+      "installOrder": 10,
+      "failurePolicy": "fail",
+      "install": {
+        "handler": "powershell",
+        "timeout": "5m0s",
+        "successExitCodes": [
+          0
+        ]
+      },
+      "validation": [
+        {
+          "handler": "file",
+          "parameters": {
+            "path": "C:\\Program Files\\testpkg\\testpkg-1.0.0.txt"
+          }
+        }
+      ],
+      "artifact": {
+        "repository": "packages",
+        "path": "./testpkg/1.0.0",
+        "filename": "install.ps1",
+        "sha256": "2314608871cd1633435477f129044a7ffe232e986a79d69640a0dbc1d6941c05",
+        "sizeBytes": 814
+      }
+    }
+  ]
+}

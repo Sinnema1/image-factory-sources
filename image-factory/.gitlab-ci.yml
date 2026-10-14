@@ -1,0 +1,499 @@
+stages:
+  - verify
+  - validate
+  - build
+
+variables:
+  # The runner image is built and published from the runner-image repository. The
+  # pin lives here so it moves in one place: it has to change when that repo
+  # tags a release carrying the package staging entry point
+  # (defect D7, docs/decisions/0003-package-install-contract.md).
+  #
+  # PINNED BY DIGEST, not just by tag. There is no registry — ADR 0003 records
+  # that ci-platform's publish path has no push, login or network
+  # call, and images reach the runner as archives installed with `podman load`.
+  # A tag is therefore mutable in place: rebuilding 0.0.20 and loading it would
+  # change what every job runs with nothing in the log to say so, because
+  # pull_policy is if-not-present and the runner never re-checks. The digest
+  # makes that drift a hard failure instead of a silent one.
+  #
+  # The tag is kept alongside the digest for readability; the digest wins.
+  # To move the pin: load the new archive onto the runner host FIRST, then read
+  # its RepoDigest (`docker image inspect --format '{{index .RepoDigests 0}}'
+  # <image>`) and update both halves here. A new tag alone will not work — with
+  # no registry there is nothing to pull from.
+  #
+  # The digest belongs to the HOST, not only to the image. On 2026-09-24 the jobs
+  # moved from a rootless-podman runner to runner-01 (Docker executor). The
+  # digest read under podman, 05085be7…, was not present there, so the runner
+  # tried to pull it and failed with `connection refused`. That error means
+  # "this digest is not loaded on this host", not a network fault. The Docker
+  # host reports 2fe1fd2b… for its 0.0.20 (image ID 0859f51f…). Podman and
+  # Docker can compute different digests for the same archive, so a change of
+  # host means re-reading the digest there — and comparing image IDs to tell a
+  # changed digest from changed content.
+  #
+  #
+  # Reading the digest without host access: we cannot log into runner-01,
+  # so for 0.1.0 (2026-09-30) a branch pinned the tag alone, and its first
+  # runner-smoke-test logged "Using docker image sha256:7bc5d0cd… with digest
+  # …@sha256:d1b990a1…". That digest is pinned below. runner-smoke-test fails on
+  # the default branch when the pin has no digest, so the same technique is safe
+  # to repeat for the next release.
+  #
+  # 0.2.1 (2026-10-06) carries a download-packages that parses and runs (D1-D3).
+  # Its digest was read from a job the image's owner ran on this same runner,
+  # runner-test-bed's test:download: "Using docker image sha256:8281ad65… for
+  # registry.example.test/images/runner-image:0.2.1 with digest …@sha256:62c3d2b8…". Same host,
+  # same image store, so no tag-only branch was needed this time. Nothing in this
+  # repository calls download-packages yet; the pin moves first so that it can.
+  # Previous pins, for rollback:
+  #   registry.example.test/images/runner-image:0.1.0@sha256:d1b990a1285f2559d85099a84d5e6f0f1f4f87f10a8030f7a057f4794c7f8977
+  #   registry.example.test/images/runner-image:0.0.20@sha256:2fe1fd2b0197d82ec49f345e4d757118fe16c8ca9cc0567afd3b67ef93cc0b14
+  PACKER_CI_IMAGE: "registry.example.test/images/runner-image:0.2.1@sha256:62c3d2b8571f1d8bdccae8116b4d2e65ffce08d340e4ba3aa278ad315aadc038"
+
+  # Start every job from an empty project directory. The runner reuses that
+  # directory between jobs, and with the default strategy (fetch) the leftovers
+  # of the previous job are only removed during checkout. A job that failed
+  # before checkout therefore uploaded the previous job's evidence/ as its own
+  # artifacts: OBSERVED 2026-10-07, twice, once on a dropped connection to
+  # GitLab and once on a pipeline whose branch had been deleted, each time with
+  # "evidence/: found 6 matching artifact files" from a job that ran no script.
+  # With clone, the directory is removed before anything is fetched, so a job
+  # that fails at "Getting source" has nothing to upload (proved 2026-10-07 by
+  # retrying a job on a deleted branch: "evidence/: no matching files"). The
+  # cost is a full clone per job, about a second for this repository at depth 20.
+  GIT_STRATEGY: clone
+
+# Every job runs the same image on the same runner. Overriding either is a
+# deliberate act, not the default.
+default:
+  tags:
+    - shared-medium
+  image:
+    name: "$PACKER_CI_IMAGE"
+    pull_policy: if-not-present
+
+# --- Reusable fragments -------------------------------------------------------
+
+# Evidence is indexed and uploaded whether the job passed, failed or was
+# cancelled. collect-evidence.sh is safe to run more than once: it keeps a
+# ledger so a second run still reports what a first run withheld.
+.evidence:
+  after_script:
+    - bash scripts/runner/collect-evidence.sh
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - evidence/
+
+# Manual jobs stay out of merge request pipelines. A rule with no condition
+# matches every pipeline type, so these jobs used to create a second, MR-only
+# pipeline on every push to a branch with an open MR — holding just the three
+# manual jobs, because jobs without rules never join MR pipelines. The MR page
+# showed that pipeline, so packer-validate, packer-fmt and runner-smoke-test
+# were invisible there. With no job matching the MR event, GitLab creates no MR
+# pipeline and the MR shows the branch pipeline, with every job.
+.manual:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - when: manual
+
+# Packer only accepts var files ending in .hcl or .json, and a GitLab file
+# variable has no extension, so copy it to the ignored default path.
+.install_vars_file:
+  script:
+    - test -f "${PACKER_VARS_FILE}" || { echo "PACKER_VARS_FILE does not name a readable file"; exit 1; }
+    - install -m 600 "${PACKER_VARS_FILE}" ./configs/windows-11-vsphere.pkrvars.hcl
+
+# --- Verify -------------------------------------------------------------------
+
+# Fails the pipeline when the image lacks something the pipeline needs, so a
+# stale or wrong image announces itself here rather than surfacing three jobs
+# later as a confusing error inside a script.
+#
+# Required = something a CI job actually runs. Optional = a capability we have
+# asked the image owner for; reported so its arrival is visible in the log the
+# day it lands, but never a failure while it is absent.
+runner-smoke-test:
+  stage: verify
+  script:
+    - echo "== identity =="
+    - id
+    - |
+      echo "== image pin =="
+      # The pin is only a pin if it carries a digest (see PACKER_CI_IMAGE). A
+      # tag-only value is allowed on a branch, to discover a new host's digest,
+      # and refused on the default branch.
+      case "$PACKER_CI_IMAGE" in
+        *@sha256:*) echo "  pinned by digest: $PACKER_CI_IMAGE" ;;
+        *)
+          if [ "${CI_COMMIT_BRANCH:-}" = "${CI_DEFAULT_BRANCH:-main}" ]; then
+            echo "FAIL: PACKER_CI_IMAGE has no digest on ${CI_DEFAULT_BRANCH:-main}: $PACKER_CI_IMAGE"
+            exit 1
+          fi
+          echo "  WARNING: tag only ($PACKER_CI_IMAGE). Pin the digest shown at the top of this log before merging." ;;
+      esac
+    - |
+      echo "== required tools =="
+      # DERIVED, not guessed. Every entry is invoked by something a CI job runs:
+      #   packer     make init, make validate-packer, packer build
+      #   make       every job's entry point
+      #   git        collect-evidence.sh, for the run's commit and ref
+      #   jq         collect-evidence.sh, stage-packages.sh,
+      #              validate-iso-metadata.sh
+      #   sha256sum  stage-packages.sh, collect-evidence.sh, verify-iso.sh
+      #   download-packages, yq
+      #              stage-packages.sh stages and verifies the package files
+      #              with download-packages, which needs yq (required since
+      #              runner-image 0.2.1, 2026-10-07)
+      #   govc       verify-datastore-iso.sh, in the verify-iso-datastore job
+      #              (required since runner-image 0.1.0, 2026-09-30)
+      #   bash       every script
+      #
+      # Re-derive rather than extend by intuition:
+      #   grep -rnE '(^|[^-a-zA-Z_./])<tool>\b' scripts/runner Makefile .gitlab-ci.yml
+      #
+      # An earlier version of this list included tar and curl. Neither is used by
+      # anything here — tar came from the govc install snippet written for the
+      # runner-image Dockerfile, which is image build time, not pipeline runtime.
+      # The job failed on a requirement that did not exist. Coreutils (sed, awk,
+      # find, tee, stat, tr, cut) are deliberately not listed: if they were
+      # absent nothing would run at all, so asserting them is noise.
+      missing=0
+      for tool in packer make git jq sha256sum govc bash yq download-packages; do
+        if command -v "$tool" >/dev/null 2>&1; then
+          printf '  present: %-10s %s\n' "$tool" "$(command -v "$tool")"
+        else
+          printf '  MISSING: %s\n' "$tool"
+          missing=$((missing + 1))
+        fi
+      done
+      if [ "$missing" -gt 0 ]; then
+        echo "FAIL: $missing required tool(s) missing. The image is not the one this pipeline expects."
+        exit 1
+      fi
+    - |
+      echo "== versions (a silently rebuilt image shows up here) =="
+      packer version
+      jq --version
+      git --version | head -1
+      govc version
+    - |
+      echo "== optional, requested from the runner-image owner =="
+      # pwsh is not needed: nothing in CI uses it. yq and download-packages
+      # moved to the required list on 2026-10-07, when stage-packages.sh began
+      # calling them.
+      for tool in pwsh; do
+        if command -v "$tool" >/dev/null 2>&1; then
+          printf '  ARRIVED: %-6s %s\n' "$tool" "$(command -v "$tool")"
+        else
+          printf '  not yet: %s\n' "$tool"
+        fi
+      done
+    - |
+      echo "== registry reachability =="
+      # ADR 0003: there is no registry; images arrive as archives loaded onto the
+      # runner host. If GitLab's own container registry is enabled on this
+      # instance, CI_REGISTRY is set and is the lowest-friction path to a real
+      # one. Reported, never enforced.
+      if [ -n "${CI_REGISTRY:-}" ]; then
+        echo "  CI_REGISTRY is set: ${CI_REGISTRY} - a GitLab container registry exists on this instance"
+      else
+        echo "  CI_REGISTRY is unset - no GitLab container registry, consistent with the archive-and-load model"
+      fi
+    - echo "Packer CI execution image validated"
+
+packer-fmt:
+  stage: verify
+  script:
+    - make fmt
+
+# Reports what the runner can do. Nothing in CI needs pwsh any more: the package
+# validator that did was deleted once ADR 0003 was accepted, and VM cleanup
+# (Remove-PackerTestVm.ps1) runs on the workstation, where it also needs
+# PowerCLI. pwsh is still reported so its arrival is visible if cleanup ever
+# moves into CI. The package proof needs the software share reachable from the
+# runner. This job only reports; it never fails the pipeline.
+runner-capabilities:
+  stage: verify
+  script:
+    - |
+      for tool in pwsh govc sha256sum jq; do
+        if command -v "$tool" >/dev/null 2>&1; then echo "tool present: $tool"; else echo "tool MISSING: $tool"; fi
+      done
+    - |
+      for path in /mnt/fileshare-shared /mnt/fileshare-shared/image-factory; do
+        if [ -d "$path" ]; then echo "share path present: $path"; else echo "share path MISSING: $path"; fi
+      done
+    - |
+      # The package share, where download-packages reads catalog packages from
+      # (PACKAGE_SOURCE_ROOT), and the one file packer/software's lock names.
+      # Seen mounted in the owner's runner-test-bed job on this runner; this
+      # says whether it is mounted for this project's jobs too.
+      package_share=/mnt/image-factory/package-content
+      if [ -d "$package_share" ]; then echo "share path present: $package_share"; else echo "share path MISSING: $package_share"; fi
+      package_file="$package_share/putty/0.83.0/putty-0.83-installer.msi"
+      if [ -f "$package_file" ]; then echo "package file present: $package_file"; else echo "package file MISSING: $package_file"; fi
+    - 'echo "runner user: $(id -un)"'
+    - |
+      echo "== outbound connectivity =="
+      # Decides what a real container registry would cost. ADR 0003 records that
+      # there is none today: images arrive as archives and are installed with
+      # podman load, and runner-smoke-test confirmed CI_REGISTRY is unset, so
+      # GitLab's own registry is not enabled on this instance either.
+      #
+      # If this runner can reach the internet, a registry can live anywhere the
+      # team prefers. If it cannot, one has to be hosted somewhere this network
+      # can already see, which is a much larger piece of work.
+      #
+      # `packer version` reporting that 1.16.1 exists upstream suggests it
+      # reached checkpoint-api.hashicorp.com, but Packer's checkpoint can be
+      # cached, so it is a hint rather than evidence. These probes settle it.
+      #
+      # --max-time keeps a blackholed network from stalling the job. Read-only
+      # GETs; nothing is pushed, pulled or authenticated.
+      # Report curl's exit code rather than a bare "unreachable". The first run
+      # of this probe could not distinguish a wrong hostname from a blocked
+      # network from an untrusted certificate, which are three different
+      # problems with three different owners.
+      probe() {
+        # `|| rc=$?` is load-bearing: GitLab runs this script under `set -e`, so
+        # a bare failing assignment kills the job before rc is ever read. That
+        # is how the first version of this probe exited 60 having printed
+        # nothing. The previous `cmd && ... || ...` form was errexit-immune by
+        # accident; this one has to say so.
+        rc=0
+        body="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "$2" 2>&1)" || rc=$?
+        # curl writes %{http_code} after its error text, so a failure arrives on
+        # two lines; fold it so each probe stays one readable line.
+        body="$(printf '%s' "$body" | tr -s '[:space:]' ' ')"
+        if [ "$rc" -eq 0 ]; then
+          printf '  %-34s HTTP %s\n' "$1" "$body"
+        else
+          printf '  %-34s FAILED (curl exit %s) %s\n' "$1" "$rc" "$body"
+        fi
+      }
+      # CI_SERVER_URL, not a hardcoded hostname. The first run guessed the host
+      # and reported it unreachable while the job was cloning from it.
+      probe "GitLab (this instance)"            "${CI_SERVER_URL}/api/v4/version"
+      probe "HashiCorp releases"                "https://releases.hashicorp.com/"
+      probe "Docker Hub registry API"           "https://registry-1.docker.io/v2/"
+      echo "  note: the registry API answers 401 when reachable - auth is required, so 401 means yes"
+      echo "  note: curl exit 6 is DNS, 7 is refused or blocked, 28 is timeout, 60 is an untrusted certificate"
+  allow_failure: true
+  rules:
+    - !reference [.manual, rules]
+
+# --- Validate -----------------------------------------------------------------
+
+packer-validate:
+  stage: validate
+  script:
+    # The same set the build checks. vcenter_host and vcenter_username have
+    # env() defaults and no validation block, so an unset value becomes an
+    # empty string that packer validate accepts: the guard is the only thing
+    # that catches it.
+    - bash scripts/runner/require-env.sh
+        VCENTER_HOST
+        VCENTER_USERNAME
+        VCENTER_PASSWORD
+        ADMIN_SERVICE_ACCOUNT
+        ADMIN_SERVICE_ACCOUNT_PASSWORD
+        AD_DOMAIN
+        AD_NETBIOS_DOMAIN
+        PACKER_RUNNER_SOURCE_IP
+        ADMIN_GROUP_SID
+        ADMIN_GROUP_NAME
+        PACKER_VARS_FILE
+    - !reference [.install_vars_file, script]
+    # Checks the ISO qualification record against its schema. Bash, and it reads
+    # only files in this repository, so it needs neither pwsh nor the share and
+    # can run here. Verifying the ISO's own bytes (verify-iso.sh) still needs the
+    # software share mounted on the runner, which it is not — so the ISO's
+    # SHA-256 is still unverified in CI.
+    # Every record, not just the default one — a record CI does not check is a
+    # record that can rot. Globbing the directory means a third ISO added later
+    # is covered without touching this file. `|| exit 1` is load-bearing: a for
+    # loop's exit status is its last command's, so without it a failure on an
+    # early record would be masked by a later one passing.
+    - |
+      for record in packer/sources/windows/*.json; do
+        bash scripts/runner/validate-iso-metadata.sh --metadata "$record" || exit 1
+      done
+    - make init
+    - make validate-packer
+
+# ISO qualification stage 2 (ADR 0004): hashes the copy of each ISO on the
+# datastore, the bytes the build actually boots, against its record. Until
+# runner-image 0.1.0 shipped govc (2026-09-30) this ran only by hand from a
+# workstation, so a drifted datastore copy would have gone unnoticed.
+#
+# Manual, not automatic: it streams every ISO in full, about 8.5 GB for
+# Windows, so it runs when a record or a datastore copy changes, not on every
+# push. Every record, like packer-validate's metadata check, so a third ISO is
+# covered without editing this job. `|| exit 1` is load-bearing for the same
+# reason there: a for loop's status is its last command's. The script exits 2
+# if govc is missing, which the smoke test's required list already guards.
+verify-iso-datastore:
+  stage: validate
+  timeout: 1h
+  extends:
+    - .evidence
+    - .manual
+  script:
+    - bash scripts/runner/require-env.sh VCENTER_HOST VCENTER_USERNAME VCENTER_PASSWORD
+    - |
+      for record in packer/sources/windows/*.json; do
+        bash scripts/runner/verify-datastore-iso.sh --metadata "$record" || exit 1
+      done
+
+# --- Build --------------------------------------------------------------------
+
+# Both build jobs name packer-validate in `needs`. Without it they wait for the
+# whole validate stage, and verify-iso-datastore is a manual job created by a
+# rule, which GitLab treats as blocking: since that job was added (2026-09-30)
+# neither build job could be played until someone had streamed both ISOs.
+# ISO stage 2 is meant to run when a record or a datastore copy changes, not
+# before every build. `needs` keeps the gate that matters (the template and
+# the ISO records validate) and drops the one that was never intended.
+packer-build-diagnostic:
+  stage: build
+  needs: ["packer-validate"]
+  timeout: 2h
+  extends:
+    - .evidence
+    - .manual
+  script:
+    - bash scripts/runner/require-env.sh
+        VCENTER_HOST
+        VCENTER_USERNAME
+        VCENTER_PASSWORD
+        ADMIN_SERVICE_ACCOUNT
+        ADMIN_SERVICE_ACCOUNT_PASSWORD
+        AD_DOMAIN
+        AD_NETBIOS_DOMAIN
+        PACKER_RUNNER_SOURCE_IP
+        ADMIN_GROUP_SID
+        ADMIN_GROUP_NAME
+        PACKER_VARS_FILE
+    - !reference [.install_vars_file, script]
+    - make init
+    # No `make validate-packer` here: build-diagnostic.sh verifies the install
+    # inputs and runs packer validate itself, so calling it first would do both
+    # twice in one job.
+    - make build-diagnostic
+
+# The only job that publishes (ADR 0005, STORY-11). It qualifies both ISOs on
+# the datastore, builds under a versioned name, seals, takes the snapshot,
+# writes the image-reference record and proves the record resolves. Any failure
+# leaves no record, and an image with no record is not published.
+#
+# Not played for a routine check: use packer-build-diagnostic for that. Each
+# run of this job leaves a new master VM in vSphere, which nothing removes.
+#
+# It refuses to run from any branch but the default one. To prove a change to
+# the publish step before merging it, play the job on the branch with
+# PUBLISH_FROM_BRANCH=true: the image reference then names the branch.
+packer-build-publish:
+  stage: build
+  needs: ["packer-validate"]
+  timeout: 2h
+  extends:
+    - .evidence
+    - .manual
+  script:
+    - bash scripts/runner/require-env.sh
+        VCENTER_HOST
+        VCENTER_USERNAME
+        VCENTER_PASSWORD
+        ADMIN_SERVICE_ACCOUNT
+        ADMIN_SERVICE_ACCOUNT_PASSWORD
+        AD_DOMAIN
+        AD_NETBIOS_DOMAIN
+        PACKER_RUNNER_SOURCE_IP
+        ADMIN_GROUP_SID
+        ADMIN_GROUP_NAME
+        PACKER_VARS_FILE
+    - !reference [.install_vars_file, script]
+    - make init
+    - make publish
+
+# Fast loop for the software install provisioners. Runs the same steps as the
+# build against an already running, retained build VM, so provisioner details
+# can be debugged in minutes.
+#
+# Play the job from the pipeline page and add these variables when prompted:
+#   HARNESS_HOST            address of the running, retained build VM (required)
+#   HARNESS_SEAL_IMAGE      true: seal the VM as the last step. IT POWERS OFF AND
+#                           CANNOT BE USED BY THE HARNESS AGAIN. Needs
+#                           HARNESS_VM_NAME, the VM's name in vCenter, so the
+#                           seal result can be read from there.
+#   HARNESS_SEAL_FORCE_FAILURE  true, with the above: the seal must report a
+#                           failure and leave the VM powered on
+#   HARNESS_FORCE_EXIT_CODE optional; 10, 11, 12 or 3010. Makes the stand-in
+#                           package-runner end its install with that code. 10, 11
+#                           and 12 must fail the job after install-result-harness.json
+#                           is downloaded; 3010 RESTARTS THE VM and must pass
+#   HARNESS_INVALID_CREDENTIAL  optional; set to "true" to connect with a made-up
+#                           account and password, to test that an invalid
+#                           credential fails the build. It never uses the real
+#                           service account, so it cannot lock that account out.
+# To test an unavailable communicator, set HARNESS_HOST to an address that is not
+# the VM (for example 192.0.2.1). Both failure tests end after the harness's
+# 2-minute WinRM timeout.
+# The VM only accepts WinRM from the runner, so this cannot be run from a
+# workstation.
+staging-harness:
+  stage: build
+  needs: ["packer-validate"]
+  timeout: 30m
+  extends:
+    - .evidence
+    - .manual
+  script:
+    - bash scripts/runner/require-env.sh
+        HARNESS_HOST
+        ADMIN_SERVICE_ACCOUNT
+        ADMIN_SERVICE_ACCOUNT_PASSWORD
+        AD_NETBIOS_DOMAIN
+    - bash scripts/runner/stage-packages.sh --emit-var-file build/package-vars.pkrvars.hcl
+    - export PKR_VAR_winrm_password="${ADMIN_SERVICE_ACCOUNT_PASSWORD}"
+    - |
+      winrm_user="${AD_NETBIOS_DOMAIN}$(printf '\134')${ADMIN_SERVICE_ACCOUNT}"
+      if [ "${HARNESS_INVALID_CREDENTIAL:-}" = "true" ]; then
+        echo "HARNESS_INVALID_CREDENTIAL is set: testing the invalid credential path with a made-up account, so no real account can be locked out"
+        winrm_user="${AD_NETBIOS_DOMAIN}$(printf '\134')invalid-credential-test"
+        export PKR_VAR_winrm_password="not-a-real-password"
+      fi
+      set -- -var-file=build/package-vars.pkrvars.hcl -var "winrm_host=${HARNESS_HOST}" -var "winrm_username=${winrm_user}"
+      if [ -n "${HARNESS_FORCE_EXIT_CODE:-}" ]; then
+        echo "HARNESS_FORCE_EXIT_CODE is set: the stand-in package-runner will end its install with ${HARNESS_FORCE_EXIT_CODE}"
+        set -- "$@" -var "force_exit_code=${HARNESS_FORCE_EXIT_CODE}"
+      fi
+      if [ "${HARNESS_TAMPER_STAGED_FILE:-}" = "true" ]; then
+        echo "HARNESS_TAMPER_STAGED_FILE is set: one staged file is changed after upload, so package-runner must end its install with 11"
+        set -- "$@" -var "tamper_staged_file=true"
+      fi
+      seal_watcher_pid=""
+      if [ "${HARNESS_SEAL_IMAGE:-}" = "true" ]; then
+        bash scripts/runner/require-env.sh HARNESS_VM_NAME ADMIN_GROUP_SID VCENTER_HOST VCENTER_USERNAME VCENTER_PASSWORD
+        echo "HARNESS_SEAL_IMAGE is set: ${HARNESS_VM_NAME} will be SEALED and powered off, and cannot be used by this harness again"
+        seal_execution_id="$(sed -n 's/^[[:space:]]*execution_id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build/package-vars.pkrvars.hcl | head -1)"
+        set -- "$@" -var "seal_image=true"
+        if [ "${HARNESS_SEAL_FORCE_FAILURE:-}" = "true" ]; then
+          echo "HARNESS_SEAL_FORCE_FAILURE is set: the seal must report a failure and leave the VM powered on"
+          set -- "$@" -var "seal_force_failure=true"
+        fi
+        bash scripts/runner/verify-seal.sh watch --vm "${HARNESS_VM_NAME}" --execution-id "${seal_execution_id}" --timeout 900 &
+        seal_watcher_pid=$!
+      fi
+      packer build "$@" packer/tests/staging-provisioners.pkr.hcl
+      if [ -n "${seal_watcher_pid}" ]; then
+        # The harness ends when the seal task has been started, not when it has
+        # finished, so wait for the watcher to capture the result.
+        wait "${seal_watcher_pid}" || true
+        bash scripts/runner/verify-seal.sh check --execution-id "${seal_execution_id}"
+      fi

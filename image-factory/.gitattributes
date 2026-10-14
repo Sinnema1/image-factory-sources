@@ -1,0 +1,22 @@
+# Line endings are declared here rather than left to each contributor's
+# core.autocrlf. The repository is authored on Windows and executed on a Linux
+# CI runner: a shell script committed with CRLF fails there with
+# "$'\r': command not found", which looks nothing like its cause.
+* text=auto eol=lf
+
+# Executed by bash on the runner. Always LF.
+*.sh text eol=lf
+Makefile text eol=lf
+
+# Consumed by Windows. PowerShell handles either, but CRLF is what an editor on
+# the build VM expects, and autounattend.xml is read by Windows Setup.
+*.ps1 text eol=crlf
+*.pkrtpl text eol=crlf
+*.xml text eol=crlf
+
+# Fixture files are hashed. Keep their bytes identical on every platform.
+# This must stay last: it overrides the text rules above, and normalising these
+# would change the SHA-256 the staging proof compares against.
+packer/fixtures/** -text
+# The catalog lock is hashed the same way.
+packer/software/** -text

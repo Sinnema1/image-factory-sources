@@ -1,0 +1,66 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temp/Staging
+/tmp/
+/temp/
+/package-staging/
+
+# Evidence (generated files)
+/evidence/*
+!/evidence/.gitkeep
+/evidence/vcenter-discovery-*.json
+
+# Packer
+*.log
+packer_cache/
+.packer/
+*.iso
+/packer/iso/
+
+# PowerShell
+*.ps1.psd1
+
+/vcenter_access_validation.json
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Optional local token/cache output
+.vcenter-session
+.vcenter-session.json
+.session-cache
+.secrets
+
+# Certificates and private keys. The WinRM bootstrap generates a certificate in
+# the guest (packer/unattended/enable-winrm.ps1); nothing should ever arrive
+# here, and if one does it must not be committable.
+*.pfx
+*.p12
+*.cer
+*.crt
+*.key
+*.pem
+
+# Local Packer variable files
+# Real variable files hold environment-specific values. CI supplies one as the
+# PACKER_VARS_FILE file variable; only the tracked .example shows its shape.
+# Matched by pattern, not by filename: a second environment's file must not
+# become committable just because nobody added a new ignore line for it.
+/configs/*.pkrvars.hcl
+!/configs/*.pkrvars.hcl.example
+*.local.pkrvars.hcl
+*.auto.pkrvars.hcl
+
+# Build inputs derived at runtime (not evidence)
+/build/

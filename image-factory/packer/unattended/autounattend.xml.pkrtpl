@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Windows Setup answer file. Rendered by Packer's templatefile() from this
+    .pkrtpl and written to the build floppy as autounattend.xml; see the
+    floppy_content block in packer/templates/windows-11-vsphere.pkr.hcl.
+
+    Windows Setup finds it automatically because it is named autounattend.xml
+    and sits at the root of removable media. Both the name and the location are
+    required; renaming it or nesting it means Setup silently ignores it and the
+    build hangs at an interactive prompt no one can see.
+
+    $${...} placeholders are Packer templatefile variables, substituted before
+    the file reaches the guest. They are not unattend variables, despite looking
+    like them. Every placeholder used here must be supplied by that
+    floppy_content block or rendering fails.
+
+    (Written $$ above because templatefile parses this comment too: a bare
+    dollar-brace anywhere in this file, including inside an XML comment, is
+    evaluated as an expression. $$ escapes it to a literal dollar sign.)
+
+    NOTE ON ORDER: the passes below appear as windowsPE, oobeSystem, specialize,
+    but Windows executes them windowsPE -> specialize -> oobeSystem. The WinRM
+    bootstrap that the whole build depends on runs in specialize, which is the
+    LAST block in this file.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+    <!-- Pass 1 of 3 to execute. Runs inside WinPE, before Windows exists. -->
+    <settings pass="windowsPE">
+        <component  name="Microsoft-Windows-International-Core-WinPE" 
+                    processorArchitecture="amd64" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    language="neutral" 
+                    versionScope="nonSxS" 
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" 
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <SetupUILanguage>
+                <UILanguage>en-US</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>en-US</InputLocale>
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+        <component  name="Microsoft-Windows-Setup" 
+                    processorArchitecture="amd64" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    language="neutral" 
+                    versionScope="nonSxS" 
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" 
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <!--
+                Standard UEFI/GPT layout for Windows 11. The three partitions
+                are created in Order, then referenced by PartitionID, and the
+                two numbers do not line up: ModifyPartition Order 2 targets
+                PartitionID 3. Read the Order values as "step number" and the
+                PartitionID values as "which partition", or the block looks
+                inconsistent when it is not.
+
+                Sizes are in MB. The EFI and MSR sizes are Microsoft's
+                documented minimums; partition 3 carries Extend=true so it
+                takes the rest of the disk, meaning the guest's C: size is set
+                by disk_size in the Packer template, not here.
+            -->
+            <DiskConfiguration>
+                <Disk wcm:action="add">
+                    <DiskID>0</DiskID>
+                    <!-- Destructive, and intended: this is a fresh build VM. -->
+                    <WillWipeDisk>true</WillWipeDisk>
+
+                    <CreatePartitions>
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>EFI</Type>
+                            <Size>200</Size>
+                        </CreatePartition>
+
+                        <CreatePartition wcm:action="add">
+                            <Order>2</Order>
+                            <Type>MSR</Type>
+                            <Size>16</Size>
+                        </CreatePartition>
+
+                        <CreatePartition wcm:action="add">
+                            <Order>3</Order>
+                            <Type>Primary</Type>
+                            <Extend>true</Extend>
+                        </CreatePartition>
+                    </CreatePartitions>
+                    
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Label>System</Label>
+                            <Format>FAT32</Format>
+                        </ModifyPartition>
+
+                        <ModifyPartition wcm:action="add">
+                            <Order>2</Order>
+                            <PartitionID>3</PartitionID>
+                            <Label>Windows</Label>
+                            <Letter>C</Letter>
+                            <Format>NTFS</Format>
+                        </ModifyPartition>
+                    </ModifyPartitions>
+                </Disk>
+
+                <!--
+                    On a disk error Setup stops at an interactive prompt. Nobody
+                    is watching this console, so in practice that shows up as the
+                    build sitting until winrm_timeout expires rather than as a
+                    disk error. Set to Never to fail faster, at the cost of
+                    losing the on-screen reason.
+                -->
+                <WillShowUI>OnError</WillShowUI>
+            </DiskConfiguration>
+
+            <UserData>
+                <AcceptEula>true</AcceptEula>
+            </UserData>
+
+            <ImageInstall>
+                <OSImage>
+                    <!--
+                        This must match an edition name inside the ISO's
+                        install.wim exactly, so it is a property of whichever
+                        ISO the Windows qualification record names: the
+                        template's windows_iso_record variable, windows-11.json
+                        in the lab. Swap the ISO, or build in another environment
+                        with an ISO whose edition is named differently, and
+                        Setup halts with no obvious cause.
+
+                        List the editions in an ISO with:
+                          dism /Get-WimInfo /WimFile:<mounted>\sources\install.wim
+                    -->
+                    <InstallFrom>
+                        <Metadata wcm:action="add">
+                            <Key>/IMAGE/NAME</Key>
+                            <Value>Windows 11 Enterprise</Value>
+                        </Metadata>
+                    </InstallFrom>
+                    <!-- Partition 3 is the Extend=true one created above. -->
+                    <InstallTo>
+                        <DiskID>0</DiskID>
+                        <PartitionID>3</PartitionID>
+                    </InstallTo>
+                    <WillShowUI>OnError</WillShowUI>
+                </OSImage>
+            </ImageInstall>
+        </component>
+    </settings>
+    <!--
+        Pass 3 of 3 to execute, despite appearing second in this file.
+
+        This pass has to FINISH first-run setup (OOBE), not only hide its
+        pages. The master is domain-joined and is never generalized (ADR 0002),
+        so the state it is left in is the state every desktop made from it
+        boots into: a master parked at the OOBE account page would put every
+        desktop there too.
+
+        Hiding the pages is not enough to finish. OOBE on a client edition ends
+        only once an account exists to end it with, so UserAccounts below
+        defines one local administrator. Until 2026-10-01 none was defined and
+        the VM sat at the account page for the whole build, which Packer never
+        noticed because it provisions over WinRM, configured in specialize.
+
+        There is deliberately no AutoLogon and no FirstLogonCommands: nothing
+        in the build needs an interactive session, and an auto-logon would
+        write the account's password into the registry.
+    -->
+    <settings pass="oobeSystem">
+        <component  name="Microsoft-Windows-International-Core"
+                    processorArchitecture="amd64" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    language="neutral" 
+                    versionScope="nonSxS" 
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" 
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <InputLocale>en-US</InputLocale>
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+        <component  name="Microsoft-Windows-Shell-Setup"
+                    processorArchitecture="amd64" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    language="neutral" 
+                    versionScope="nonSxS" 
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" 
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <!-- 3 = send no diagnostic data to Microsoft. 1 is the default. -->
+                <ProtectYourPC>3</ProtectYourPC>
+            </OOBE>
+            <!--
+                A Windows time zone ID, not an IANA name. The image is set to
+                UTC and each user's own zone is applied per session on the
+                delivery side (ADR 0002).
+            -->
+            <TimeZone>${windows_time_zone}</TimeZone>
+            <!--
+                The account OOBE finishes with. It exists only for the length
+                of the build: the password is generated per build by the Packer
+                template and never used to sign in, and Remove-BuildArtifact.ps1
+                deletes the account and fails the build if it survives.
+
+                The password is a second <Password> element cached under
+                C:\Windows\Panther, covered by the same cleanup and scan as the
+                domain-join password above. The template generates it from
+                characters that need no XML escaping.
+            -->
+            <UserAccounts>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add">
+                        <Name>${setup_account_name}</Name>
+                        <Group>Administrators</Group>
+                        <Password>
+                            <Value>${setup_account_password}</Value>
+                            <PlainText>true</PlainText>
+                        </Password>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
+        </component>
+    </settings>
+    <!--
+        Pass 2 of 3 to execute, despite appearing last in this file. Everything
+        the build depends on happens here: the machine name, the domain join,
+        and the WinRM bootstrap Packer connects through.
+    -->
+    <settings pass="specialize">
+        <component  name="Microsoft-Windows-Shell-Setup"
+                    processorArchitecture="amd64"
+                    publicKeyToken="31bf3856ad364e35"
+                    language="neutral"
+                    versionScope="nonSxS"
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <!--
+                NetBIOS limit is 15 characters; a longer name fails the domain
+                join here rather than at validation time, because the Packer
+                template does not constrain windows_computer_name.
+            -->
+            <ComputerName>${windows_computer_name}</ComputerName>
+        </component>
+        <component  name="Microsoft-Windows-UnattendedJoin"
+                    processorArchitecture="amd64" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    language="neutral" 
+                    versionScope="nonSxS" 
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" 
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <!--
+                The password arrives ALREADY XML-escaped, from the
+                admin_service_account_password_xml local in the Packer template.
+                Do not add escaping here: it would be applied twice and the join
+                would fail with a credential error that looks nothing like a
+                quoting bug.
+
+                This file is cached into C:\Windows\Panther\ by Setup, so it is
+                a pre-seal cleanup item (ADR 0002).
+            -->
+            <Identification>
+                <Credentials>
+                    <Domain>${ad_domain}</Domain>
+                    <Username>${admin_service_account}</Username>
+                    <Password>${admin_service_account_password_xml}</Password>
+                </Credentials>
+                <JoinDomain>${ad_domain}</JoinDomain>
+            </Identification>
+        </component>
+        <component  name="Microsoft-Windows-Deployment"
+                    processorArchitecture="amd64" 
+                    publicKeyToken="31bf3856ad364e35" 
+                    language="neutral" 
+                    versionScope="nonSxS" 
+                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" 
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <!--
+                The one command that turns an installed Windows into something
+                Packer can reach. Four things here are load-bearing:
+
+                  A:\        the Packer floppy. floppy_files in the template puts
+                             enable-winrm.ps1 there, and Windows gives the floppy
+                             drive A:. If that ever changes, this path changes.
+                  Bypass     the script is unsigned and on removable media, so
+                             the default execution policy would refuse it.
+                  Never      a reboot here would interrupt the VMware Tools
+                             install and leave WinRM unconfigured. The script
+                             installs Tools with REBOOT=R for the same reason:
+                             both halves of that contract must stay in step.
+                  Order 1    the only command, but the element is required.
+
+                The script's own exit status does not fail Setup. A failure
+                surfaces later as Packer timing out on WinRM; the reason is in
+                C:\Windows\Temp\enable-winrm-bootstrap.log on the retained VM.
+            -->
+            <RunSynchronous>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <Description>Configure VMware Tools and Packer WinRM readiness</Description>
+                    <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -File A:\enable-winrm.ps1 -PackerRunnerSourceIp "${packer_runner_source_ip}" -AdminGroupSid "${admin_group_sid}" -AdminGroupName "${admin_group_name}"</Path>
+                    <WillReboot>Never</WillReboot>
+                </RunSynchronousCommand>
+            </RunSynchronous>
+        </component>
+    </settings>
+</unattend>

@@ -1,0 +1,22 @@
+apiVersion: image.example/v1alpha1
+kind: ImageRecipe
+metadata:
+  name: windows-vm
+  version: "0.0.1"
+  baselineClassification: slim-vdi-base
+target:
+  platform: windows
+  release: "11"
+  architecture: amd64
+  imageType: vm
+defaults:
+  failurePolicy: fail
+packages:
+  - name: vm-integration-tools
+    version: "12.5.2"
+    installOrder: 10
+  - name: security-agent
+    version: "8.4.1"
+    installOrder: 20
+    dependencies:
+      - vm-integration-tools

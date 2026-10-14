@@ -1,0 +1,36 @@
+#yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+archives:
+  - formats: ['binary']
+    ids: [ package-runner ]
+builds:
+  - id: package-runner
+    binary: package-runner
+    env:
+    - CGO_ENABLED=0
+    flags:
+    - -trimpath
+    targets:
+    - "darwin_arm64"
+    - "windows_amd64"
+    - "linux_amd64"
+    - "linux_arm64"
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    main: ./cmd/package-runner
+
+publishers:
+  - name: artifacts
+    cmd: "{{ .Env.RT_UPLOAD_CMD }}"
+    dir: "{{ .Env.CI_PROJECT }}/{{ .Env.GORELEASER_BUILD_DIR }}"
+
+changelog:
+  disable: true
+
+release:
+  disable: true
+
+
+
+
+

@@ -1,0 +1,26 @@
+apiVersion: packages.example/v1alpha1
+kind: PackageDefinition
+metadata:
+  name: putty
+  version: "0.83.0"
+artifact:
+  repository: packages
+  path: ./putty/0.83.0
+  filename: /putty-0.83-installer.msi
+  sha256: "d816fba5750e95ae5f845ad22bd165e19ebefbbf298f453abc1db2ef7655e4b8"
+  sizeBytes: 3508736
+install:
+  handler: msi
+  timeout: 20m
+  arguments:
+    - /qn
+    - /norestart
+    - /l*v
+    - ./evidence/putty/install.log
+  successExitCodes: [0]
+validation:
+  - handler: file
+    parameters:
+      path: "C:\\Program Files (X86)\\PuTTY\\putty.exe"
+
+

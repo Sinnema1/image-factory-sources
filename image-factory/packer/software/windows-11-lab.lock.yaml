@@ -1,0 +1,52 @@
+{
+  "apiVersion": "image.example/v1alpha1",
+  "kind": "ImageRecipeLock",
+  "metadata": {
+    "name": "windows-11-lab",
+    "version": "0.0.1",
+    "generatedAt": "2026-10-12T00:00:00Z"
+  },
+  "target": {
+    "platform": "windows",
+    "release": "11",
+    "architecture": "amd64",
+    "imageType": "vm"
+  },
+  "defaults": {
+    "failurePolicy": "fail"
+  },
+  "packages": [
+    {
+      "name": "putty",
+      "version": "0.83.0",
+      "installOrder": 10,
+      "failurePolicy": "fail",
+      "install": {
+        "handler": "msi",
+        "arguments": [
+          "/qn",
+          "/norestart"
+        ],
+        "timeout": "20m0s",
+        "successExitCodes": [
+          0
+        ]
+      },
+      "validation": [
+        {
+          "handler": "file",
+          "parameters": {
+            "path": "C:\\Program Files (x86)\\PuTTY\\putty.exe"
+          }
+        }
+      ],
+      "artifact": {
+        "repository": "packages",
+        "path": "./putty/0.83.0",
+        "filename": "putty-0.83-installer.msi",
+        "sha256": "d816fba5750e95ae5f845ad22bd165e19ebefbbf298f453abc1db2ef7655e4b8",
+        "sizeBytes": 3508736
+      }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+variables: 
+  RT_UPLOAD_CMD: "echo 'publishing'"
+  GORELEASER_BUILD_DIR: "dist"
+  GORELEASER_FLAGS: "--skip=validate"
+  CI_VERSION: 70cec0ce
+  GO_CI: registry.example.test/images/go-ci:${CI_VERSION}
+
+.go_base:
+  image: $GO_CI
+  tags:
+    - shared-medium
+
+publish:binary:go:
+  extends: .go_base
+  script:
+    - '[ -z "$(git tag)" ] && git tag 0.0.0 && echo "This project has not been tagged, defaultiong to 0.0.0"'
+    - goreleaser release $GORELEASER_FLAGS
+  rules:
+
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_TAG
+
+
+

@@ -1,0 +1,75 @@
+stages:
+  - publish
+  - promote
+
+variables:
+  SHARED_MNT: "/mnt/image-factory"
+  SHARED_SCRIPTS_DIR: "$SHARED_MNT/artifactory/$CI_PROJECT_PATH/scripts"
+  LOCAL_SCRIPTS_DIR: "/home/gitlab-runner/bin"  # User-writable directory
+
+.copy_scripts:
+  script:
+    - |
+      for SCRIPT in scripts/*; do
+        if [ -f "${SCRIPT}" ]; then
+          SCRIPT_NAME=$(basename "${SCRIPT}")
+          cp "${SCRIPT}" "${VERSION_DIR}/${SCRIPT_NAME}"
+          # chmod +x "${VERSION_DIR}/${SCRIPT_NAME}"
+          echo "Copied ${SCRIPT_NAME} to ${VERSION_DIR}"
+        fi
+      done
+
+publish:scripts:
+  stage: publish
+  tags:
+    - container-publish
+  script:
+    - |
+      SCRIPT_VERSION="${CI_COMMIT_SHORT_SHA:-unknown}"
+      VERSION_DIR="${SHARED_SCRIPTS_DIR}/${SCRIPT_VERSION}"
+      mkdir -p "${VERSION_DIR}"
+    - !reference [.copy_scripts, script]
+    - |
+      if [[ $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH ]]; then
+        mkdir -p "${SHARED_SCRIPTS_DIR}/latest"
+        cp -f "${VERSION_DIR}"/* "${SHARED_SCRIPTS_DIR}/latest/"
+        # chmod +x "${SHARED_SCRIPTS_DIR}/latest/"*
+        echo "Updated 'latest' directory on shared drive"
+      fi
+    - |
+      echo "✅ Published all scripts (version ${SCRIPT_VERSION}) to: ${VERSION_DIR}"
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+promote:scripts:
+  stage: promote
+  tags:
+    - container-publish
+  script:
+    - |
+      SCRIPT_VERSION="${CI_COMMIT_TAG:-latest}"
+      VERSION_DIR="${SHARED_SCRIPTS_DIR}/${SCRIPT_VERSION}"
+      mkdir -p "${VERSION_DIR}"
+    - !reference [.copy_scripts, script]
+    - |
+      mkdir -p "${SHARED_SCRIPTS_DIR}/latest"
+      cp -f "${VERSION_DIR}"/* "${SHARED_SCRIPTS_DIR}/latest/"
+      # chmod +x "${SHARED_SCRIPTS_DIR}/latest/"*
+
+      # Copy to user-writable directory
+      mkdir -p "${LOCAL_SCRIPTS_DIR}"
+      for SCRIPT in scripts/*; do
+        if [ -f "${SCRIPT}" ]; then
+          SCRIPT_NAME=$(basename "${SCRIPT}")
+          cp "${SCRIPT}" "${LOCAL_SCRIPTS_DIR}/${SCRIPT_NAME}"
+          chmod +x "${LOCAL_SCRIPTS_DIR}/${SCRIPT_NAME}"
+          echo "Updated ${SCRIPT_NAME} in ${LOCAL_SCRIPTS_DIR}"
+        fi
+      done
+    - |
+      echo "✅ Promoted all scripts (version ${SCRIPT_VERSION}) to:"
+      echo "  - Shared drive: ${VERSION_DIR}"
+      echo "  - Local runner: ${LOCAL_SCRIPTS_DIR}"
+  rules:
+    - if: $CI_COMMIT_TAG

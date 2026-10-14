@@ -1,0 +1,128 @@
+{
+ "overallResult": {
+  "OverallSuccess": true,
+  "SuccessfulPackages": [
+   "putty",
+   "firefox"
+  ],
+  "FailedPackages": [],
+  "BlockedPackages": [],
+  "Degraded": false,
+  "PublicationEligible": true
+ },
+ "packageResults": {
+  "firefox": {
+   "status": "success",
+   "exitCode": 0,
+   "stdout": "",
+   "stderr": "",
+   "duration": 42340113900,
+   "timestamp": "2026-10-07T20:17:47.7694348-05:00",
+   "validations": [
+    {
+     "package": "firefox",
+     "package_version": "156.0.1",
+     "validator": "file",
+     "target": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+     "result": "PASSED",
+     "host": "workstation-02",
+     "duration_ms": 6,
+     "checks": [
+      {
+       "name": "exists",
+       "expected": true,
+       "actual": true,
+       "passed": true
+      }
+     ],
+     "checks_passed": 1,
+     "checks_total": 1,
+     "observed": {
+      "company_name": "Mozilla Corporation",
+      "file_version": "156.0.1.575",
+      "modified_utc": "2026-09-21T15:06:27Z",
+      "product_name": "Firefox",
+      "sha256": "3a4aa626657fca70e33be058c69756159a3cda4acdaf3802e2ba582c897f3295",
+      "size_bytes": 1079424
+     },
+     "timestamp": "2026-10-08T01:17:47.7757279Z"
+    },
+    {
+     "package": "firefox",
+     "package_version": "156.0.1",
+     "validator": "registry",
+     "target": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Mozilla Firefox\\DisplayVersion",
+     "result": "PASSED",
+     "host": "workstation-02",
+     "duration_ms": 2,
+     "checks": [
+      {
+       "name": "key_exists",
+       "expected": true,
+       "actual": true,
+       "passed": true
+      },
+      {
+       "name": "value_exists",
+       "expected": true,
+       "actual": true,
+       "passed": true
+      },
+      {
+       "name": "data",
+       "expected": "156.0.1",
+       "actual": "156.0.1",
+       "passed": true
+      }
+     ],
+     "checks_passed": 3,
+     "checks_total": 3,
+     "observed": {
+      "data": "156.0.1",
+      "value_type": "REG_SZ"
+     },
+     "timestamp": "2026-10-08T01:17:47.779181Z"
+    }
+   ]
+  },
+  "putty": {
+   "status": "success",
+   "exitCode": 0,
+   "stdout": "",
+   "stderr": "",
+   "duration": 1654839800,
+   "timestamp": "2026-10-07T20:17:05.3915491-05:00",
+   "validations": [
+    {
+     "package": "putty",
+     "package_version": "0.83.0",
+     "validator": "file",
+     "target": "C:\\Program Files (X86)\\PuTTY\\putty.exe",
+     "result": "PASSED",
+     "host": "workstation-02",
+     "duration_ms": 31,
+     "checks": [
+      {
+       "name": "exists",
+       "expected": true,
+       "actual": true,
+       "passed": true
+      }
+     ],
+     "checks_passed": 1,
+     "checks_total": 1,
+     "observed": {
+      "company_name": "Simon Tatham",
+      "file_version": "0.83.0.0",
+      "modified_utc": "2025-02-01T16:23:28Z",
+      "product_name": "PuTTY suite",
+      "sha256": "14f9b44c64ee854d7bd81c4f49cbc219dc0ecb1f1b0a5cd1a3349b2d7f2ba86f",
+      "size_bytes": 1151080
+     },
+     "timestamp": "2026-10-08T01:17:05.4259388Z"
+    }
+   ]
+  }
+ },
+ "generatedAt": "2026-10-08T01:17:47.7797384Z"
+}

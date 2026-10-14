@@ -1,0 +1,108 @@
+stages:
+  - build
+  - publish
+
+variables:
+  # Local namespace used to organize images
+  LOCAl_IMAGE_NAMESPACE: "registry.example.test/images"
+  # Default publish root (override in job if needed)
+  PUBLISH_ROOT: "/mnt/image-factory/images"
+  CONTAINER_SCRIPTS_DIR: "image-factory-group/ci-platform/scripts"
+  SHARED_SCRIPT_DIR: "$PUBLISH_ROOT/artifactory/$CONTAINER_SCRIPTS_DIR"
+  # Local staging directory for temporary files
+  LOCAL_STAGE_ROOT: "/var/tmp/image-publisher"
+  # Lock file to prevent concurrent publishes
+  LOCK_FILE: "/var/lock/image-publisher/publish.lock"
+  # Local path for the script
+  LOCAL_SCRIPT_PATH: "/home/gitlab-runner/bin/publish-image.sh"
+
+# template
+.container_rules:
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /\d+\.\d+\.\d+/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+
+# --- New: Ensure the script is available locally ---
+before_script:
+  - |
+    if [ ! -f "${LOCAL_SCRIPT_PATH}" ]; then
+      echo "Script not found at ${LOCAL_SCRIPT_PATH}. Pulling from shared drive..."
+      mkdir -p "$(dirname "${LOCAL_SCRIPT_PATH}")"
+      cp "${SHARED_SCRIPT_DIR}" "${LOCAL_SCRIPT_PATH}"
+      chmod +x "${LOCAL_SCRIPT_PATH}"
+    else
+      echo "Script already exists at ${LOCAL_SCRIPT_PATH}. Skipping pull."
+    fi
+
+# Build the Podman image
+build:container:image:
+  stage: build
+  tags: 
+    - container-publish
+  script:
+    - |
+      # Set image name and version (from Git tag or commit SHA)
+      IMAGE_NAME="${CI_PROJECT_NAME:-my-app}"
+      IMAGE_VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
+
+      RELEASE_REFERENCE="${LOCAl_IMAGE_NAMESPACE}/${IMAGE_NAME}:${IMAGE_VERSION}"
+      IMAGE_REFERENCE="${RELEASE_REFERENCE}"
+
+      echo "Building Podman image: ${IMAGE_REFERENCE}"
+
+      podman build \
+        --build-arg "IMAGE_VERSION=${IMAGE_VERSION}" \
+        --build-arg "SOURCE_COMMIT=${CI_COMMIT_SHA}" \
+        --label "org.example.image.revision=${CI_COMMIT_SHA}" \
+        --label "org.example.image.version=${IMAGE_VERSION}" \
+        --tag "${RELEASE_REFERENCE}" \
+        --file Dockerfile \
+        .
+
+      # Save the image reference for the publish stage
+      echo "IMAGE_NAME=${IMAGE_NAME}" >> build.env
+      echo "IMAGE_VERSION=${IMAGE_VERSION}" >> build.env
+      echo "IMAGE_REFERENCE=${IMAGE_REFERENCE}" >> build.env
+      echo "RELEASE_REFERENCE=${RELEASE_REFERENCE}" >> build.env
+
+  artifacts:
+    reports:
+      dotenv: build.env
+    paths:
+      - build.env
+    expire_in: 1 day
+  rules:
+    - !reference [.container_rules, rules]
+
+# Publish the Podman image to the fileshare
+publish:container:image:
+  stage: publish
+  tags:
+    - container-publish
+  needs: 
+   - "build:container:image"
+  script:
+    - |
+      export $(grep -v '^#' build.env | xargs)
+    - |
+      echo "IMAGE_NAME=${IMAGE_NAME}"
+      echo "IMAGE_VERSION=${IMAGE_VERSION}"
+      echo "IMAGE_REFERENCE=${IMAGE_REFERENCE}"
+      echo "RELEASE_REFERENCE=${RELEASE_REFERENCE}"
+    - |
+      echo "check perms"
+      ls -l ${LOCAL_SCRIPT_PATH}
+    - |
+      echo "add execute perms"
+      chmod +x ${LOCAL_SCRIPT_PATH}
+      ls -l ${LOCAL_SCRIPT_PATH}
+    - whoami
+    - echo "Publishing ${IMAGE_NAME} ${IMAGE_VERSION} to ${PUBLISH_ROOT}"
+    - |
+      # Run the publish-image.sh script
+      "${LOCAL_SCRIPT_PATH}" 
+  rules:
+    - if: $CI_COMMIT_TAG =~ /\d+\.\d+\.\d+/
+  resource_group: image-share-publisher

@@ -1,0 +1,32 @@
+apiVersion: packages.example/v1alpha1
+kind: PackageDefinition
+metadata:
+  name: firefox
+  version: "156.0.1"
+artifact:
+  repository: packages
+  path: ./firefox/156.0.1
+  filename: Firefox Setup 156.0.1.msi
+  sha256: "d5975a753af9131068fd78835ee3492bd62e5c043d053f6f701f883d02d6a0dc"
+  sizeBytes: 92909568
+install:
+  handler: msi
+  timeout: 20m
+  arguments:
+    - /qn
+    - /norestart
+    - /l*v
+    - ./evidence/firefox/install.log
+  successExitCodes: [0]
+validation:
+  - handler: file
+    parameters:
+      path: "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
+  - handler: registry
+    parameters:
+      hive: HKLM
+      key: SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Mozilla Firefox
+      value: DisplayVersion
+      data: 156.0.1
+  
+

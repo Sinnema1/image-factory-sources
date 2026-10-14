@@ -1,0 +1,18 @@
+{
+  "filename": "vmware-tools-windows-13.1.0.iso",
+  "datastore": "datastore-01",
+  "datastorePath": "image-factory/iso/vmware-tools-windows-13.1.0.iso",
+  "sha256": "d27372876678846db17f286c442fe509c9d997b2cff3889520579ced8c394f65",
+  "sizeBytes": 142280704,
+  "description": "VMware Tools 13.1.0 (build 25218885) for Windows. Attached as the second ISO by the Packer build and installed in the guest by enable-winrm.ps1 during specialize. It arrived as vmtools/windows.iso inside the Broadcom download recorded in origin and was renamed when published to the datastore; that member hashes to sha256 (verified 2026-09-30), so the datastore copy is the vendor ISO. Hash and size measured from the datastore copy on 2026-09-23.",
+  "qualifiedOn": "2026-09-23",
+  "origin": {
+    "vendor": "Broadcom support portal (VMware Tools for Windows download)",
+    "archive": "\\\\fileshare.example.test\\Shared\\image-factory\\vendor-archives\\VMware-Tools-windows-13.1.0.0.25218885-25294452.zip",
+    "archiveSha256": "588e878b5448ed7f05e19e84bbc3ee8bbe27b2a675b2ef0345d6609b080f7574",
+    "member": "vmtools/windows.iso",
+    "version": "13.1.0",
+    "build": "25218885",
+    "verifiedOn": "2026-09-30"
+  }
+}
