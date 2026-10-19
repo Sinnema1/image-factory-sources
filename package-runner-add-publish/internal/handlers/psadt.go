@@ -1,6 +1,4 @@
 // Package handlers contains the installation handlers for package-runner
-//go:build windows || linux
-// +build windows linux
 
 package handlers
 

@@ -1,5 +1,5 @@
 variables: 
-  RT_UPLOAD_CMD: "echo 'publishing'"
+  # RT_UPLOAD_CMD: "./move_files.sh ./dist /mnt/image-factory/artifacts"
   GORELEASER_BUILD_DIR: "dist"
   GORELEASER_FLAGS: "--skip=validate"
   CI_VERSION: 70cec0ce
@@ -13,14 +13,23 @@ variables:
 publish:binary:go:
   extends: .go_base
   script:
-    - '[ -z "$(git tag)" ] && git tag 0.0.0 && echo "This project has not been tagged, defaultiong to 0.0.0"'
-    - goreleaser release $GORELEASER_FLAGS
-  rules:
-
+    - PUB_CLI_VERSION="${CI_COMMIT_TAG:-${CI_COMMIT_SHORT_SHA}}"
+    - echo $PUB_CLI_VERSION
+    - export PUB_CLI_VERSION
+    - |
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        goreleaser release $GORELEASER_FLAGS
+      else
+        goreleaser release --snapshot
+      fi
   rules:
     - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_TAG
+    - if: $CI_COMMIT_TAG
+  artifacts:
+    paths:
+     - $GORELEASER_BUILD_DIR
+    when: always
 
 
 

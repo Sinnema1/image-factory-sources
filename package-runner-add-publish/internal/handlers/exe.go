@@ -1,5 +1,4 @@
 // Package handlers contains the installation handlers for package-runner
-// +build windows linux
 
 package handlers
 

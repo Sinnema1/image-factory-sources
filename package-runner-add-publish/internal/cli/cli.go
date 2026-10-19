@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"runtime"
 
 	"package-runner/internal/config"
 	"package-runner/internal/executor"
@@ -200,6 +201,10 @@ func cmdInstall(args []string) error {
 		ContinueOnFailure: config.ContinueOnFailure,
 	})
 
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("this CLI command can only be run on windows OS")
+
+	}
 	// Run the executor
 	result, err := executor.Run()
 

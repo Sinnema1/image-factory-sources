@@ -21,8 +21,8 @@ builds:
 
 publishers:
   - name: artifacts
-    cmd: "{{ .Env.RT_UPLOAD_CMD }}"
-    dir: "{{ .Env.CI_PROJECT }}/{{ .Env.GORELEASER_BUILD_DIR }}"
+    cmd: >
+      ./publish_cli.sh {{ .Env.PUB_CLI_VERSION }} {{ .Env.GORELEASER_BUILD_DIR }} /mnt/image-factory/artifacts
 
 changelog:
   disable: true
