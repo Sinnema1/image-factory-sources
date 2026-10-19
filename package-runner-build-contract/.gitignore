@@ -1,8 +1,0 @@
-# Do not copy executables to repo
-*.exe
-
-# Ignore local package repo
-/packages/*
-
-# Ignore evidence folder generated
-/evidence/*
