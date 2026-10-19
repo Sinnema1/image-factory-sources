@@ -188,6 +188,9 @@ role_of() {
         seal-prepare-result*.json)  echo "seal" ;;
         seal-result-*.json)         echo "seal" ;;
         image-snapshot-*.json)      echo "publish" ;;
+        evidence-store-put-*.json)  echo "retention" ;;
+        masters-list-*.json)        echo "retention" ;;
+        master-retired-*.json)      echo "retention" ;;
         enable-winrm-bootstrap*.log) echo "bootstrap-log" ;;
         preflight-*.log)            echo "preflight" ;;
         vm-list-*.log)              echo "inventory" ;;

@@ -6,8 +6,14 @@
 #      committed value is the trust anchor (ADR 0003, C1): the guest only checks
 #      the lock against the sidecar uploaded with it, which catches a corrupted
 #      transfer, not a lock that is not the one this repository reviewed.
-#   2. The package-runner binary, against the SHA-256 committed beside it, the
-#      same way. Today that is the stand-in in packer/fixtures/package-runner/.
+#   2. The package-runner binary, against a committed SHA-256, the same way.
+#      By default that is the release named in packer/package-runner/. The
+#      binary itself is not in the repository (Site B's GitLab refuses .exe
+#      files): this script copies it from where the release is published, the
+#      path in package-runner.exe.source, into build/package-runner/, and only
+#      then checks it against package-runner.exe.sha256. The repository holds
+#      the identity, the store holds the bytes, as for packages and ISOs. A
+#      release overwritten in the store no longer matches, and the build stops.
 #   3. The package files. runner-image's download-packages (in the runner image
 #      since 0.2.1) reads the lock, copies each package's file from the source
 #      root into <artifact-root>/<name>/<version>/, and checks its size and
@@ -34,9 +40,14 @@
 #                    as mounted in the job (/mnt/image-factory/package-content).
 #   --artifact-root  where the verified tree is written. Emptied first. Default:
 #                    build/packages, which git ignores.
+#   --runner         a package-runner file used as it is, with its .sha256
+#                    beside it, instead of the release. The harness passes the
+#                    stand-in this way for its forced-exit tests.
 #
 # The defaults can also be set as PACKAGE_LOCK, PACKAGE_SOURCE_ROOT,
-# PACKAGE_ARTIFACT_ROOT and PACKAGE_RUNNER. Needs bash, sha256sum, jq, yq and
+# PACKAGE_ARTIFACT_ROOT and PACKAGE_RUNNER. PACKAGE_RUNNER_SOURCE overrides
+# where the release is copied from, for example a local copy on a workstation,
+# which has no share mounted. Needs bash, sha256sum, jq, yq and
 # download-packages; the last two are in the runner image, not on a workstation.
 set -uo pipefail
 umask 077
@@ -48,7 +59,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOCK="${PACKAGE_LOCK:-${REPO_ROOT}/packer/fixtures/software/windows-vm-fixture.lock.yaml}"
 SOURCE_ROOT="${PACKAGE_SOURCE_ROOT:-${REPO_ROOT}/packer/fixtures/software/packages}"
 ARTIFACT_ROOT="${PACKAGE_ARTIFACT_ROOT:-${REPO_ROOT}/build/packages}"
-RUNNER="${PACKAGE_RUNNER:-${REPO_ROOT}/packer/fixtures/package-runner/package-runner.ps1}"
+# Empty means the release; see step 2.
+RUNNER="${PACKAGE_RUNNER:-}"
+RELEASE_DIR="${REPO_ROOT}/packer/package-runner"
 VAR_FILE=""
 
 while [[ $# -gt 0 ]]; do
@@ -59,7 +72,7 @@ while [[ $# -gt 0 ]]; do
         --runner)          RUNNER="${2:-}"; shift 2 ;;
         --evidence-dir)    EVIDENCE_DIR="${2:-}"; shift 2 ;;
         --emit-var-file)   VAR_FILE="${2:-}"; shift 2 ;;
-        -h|--help)         sed -n '2,39p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        -h|--help)         sed -n '2,50p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *)                 printf 'Error: unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
 done
@@ -77,7 +90,7 @@ EXECUTION_ID="${CI_JOB_ID:-local-${TIMESTAMP}}"
 
 # Filled in as the checks progress, so a failure still records what was known.
 lock_expected=""; lock_actual=""; runner_expected=""; runner_actual=""; error=""
-download_exit=""; staged_files="[]"
+runner_source=""; download_exit=""; staged_files="[]"
 
 write_evidence() {
     local result="$1"
@@ -88,7 +101,8 @@ write_evidence() {
         --arg execution_id "$EXECUTION_ID" \
         --arg lock "$(basename -- "$LOCK")" \
         --arg lock_expected "$lock_expected" --arg lock_actual "$lock_actual" \
-        --arg runner "$(basename -- "$RUNNER")" \
+        --arg runner "$(basename -- "${RUNNER:-package-runner.exe}")" \
+        --arg runner_source "$runner_source" \
         --arg runner_expected "$runner_expected" --arg runner_actual "$runner_actual" \
         --arg download_exit "$download_exit" \
         --arg download_log "$(basename -- "$DOWNLOAD_LOG")" \
@@ -100,7 +114,8 @@ write_evidence() {
             error: (if $error == "" then null else $error end),
             execution_id: $execution_id,
             lock: {file: $lock, expected_sha256: $lock_expected, actual_sha256: $lock_actual},
-            package_runner: {file: $runner, expected_sha256: $runner_expected, actual_sha256: $runner_actual},
+            package_runner: {file: $runner, source: (if $runner_source == "" then null else $runner_source end),
+                             expected_sha256: $runner_expected, actual_sha256: $runner_actual},
             packages: {
                 tool: "download-packages",
                 exit_code: (if $download_exit == "" then null else ($download_exit | tonumber) end),
@@ -143,6 +158,26 @@ lock_actual="$(sha256sum <"$LOCK" | cut -d' ' -f1)"
 [[ "$lock_actual" == "$lock_expected" ]] || fail "the lock does not match its committed SHA-256"
 
 # --- 2. The package-runner binary, against the committed hash. ---
+# The release is copied in first, with the committed hash beside the copy, so
+# the check below is the same for the release and for a file given with
+# --runner.
+if [[ -z "$RUNNER" ]]; then
+    source_record="${RELEASE_DIR}/package-runner.exe.source"
+    runner_source="${PACKAGE_RUNNER_SOURCE:-}"
+    if [[ -z "$runner_source" ]]; then
+        [[ -f "$source_record" ]] || fail "no record of where the package-runner release is: ${source_record}"
+        runner_source="$(tr -d '\r' <"$source_record" | sed -n '1p')"
+    fi
+    [[ -n "$runner_source" ]] || fail "the package-runner source record is empty: ${source_record}"
+    [[ -f "$runner_source" ]] ||
+        fail "the package-runner release was not found at ${runner_source}. On a workstation, set PACKAGE_RUNNER_SOURCE to a local copy."
+    RUNNER="${BUILD_DIR}/package-runner/package-runner.exe"
+    rm -rf -- "${BUILD_DIR}/package-runner"
+    mkdir -p -- "${BUILD_DIR}/package-runner" || fail "could not create ${BUILD_DIR}/package-runner"
+    cp -- "$runner_source" "$RUNNER" || fail "could not copy the package-runner release from ${runner_source}"
+    cp -- "${RELEASE_DIR}/package-runner.exe.sha256" "${RUNNER}.sha256" ||
+        fail "no committed SHA-256 for the package-runner release: ${RELEASE_DIR}/package-runner.exe.sha256"
+fi
 [[ -f "$RUNNER" ]] || fail "package-runner not found: ${RUNNER}"
 runner_expected="$(expected_sha_for "$RUNNER")" ||
     fail "no usable committed SHA-256 for package-runner: expected $(basename -- "$RUNNER").sha256 beside it, in sha256sum format"

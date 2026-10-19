@@ -15,11 +15,10 @@ packages/                             the source root download-packages reads fr
     install.ps1                       the package: its one file, run by the powershell handler
 ```
 
-The stand-in for `package-runner` itself is in [`../package-runner/`](../package-runner/).
-Since 2026-10-07 that folder also holds `package-runner.exe`, a trial build of a proposal for
-the real runner, and its `.sha256`. It is not a release and nothing uses it by default: play
-a job with `PACKAGE_RUNNER=packer/fixtures/package-runner/package-runner.exe` to try it. How
-it was built is in ADR 0003, "Trial of a `package-runner` build".
+Builds install this fixture with the `package-runner` 1.0.0 release in
+[`../../package-runner/`](../../package-runner/README.md), the default since 2026-10-19. The
+stand-in in [`../package-runner/`](../package-runner/) is kept only for the staging harness's
+forced-exit tests. The trial build that preceded the release was removed the same day.
 
 `.gitattributes` marks `packer/fixtures/` `-text` so the bytes, and therefore the hashes, are
 identical on Windows checkouts and on the Linux runner. Do not let an editor convert line
@@ -78,16 +77,15 @@ edit to the stand-in.
 Three things change, and the template does not. All three were tried together on 2026-10-12
 with the lock in [`../../software/`](../../software/README.md): PuTTY 0.83.0 from the share,
 installed by the trial executable (jobs 4408 and 4441; ADR 0003, "First real package
-installed"). They are set per pipeline; the defaults are still this fixture and the stand-in.
+installed"). The first two are set per pipeline; the default lock is still this fixture. The
+third is done.
 
 1. `PACKAGE_LOCK` names the vendored, resolved lock, with its expected SHA-256 committed beside
    it.
 2. `PACKAGE_SOURCE_ROOT` names the package share as mounted in the job
    (`/mnt/image-factory/package-content`). Nothing else: `stage-packages.sh` already calls
    `download-packages`.
-3. `PACKAGE_RUNNER` names the tagged `package-runner` release, with its SHA-256 committed
-   beside it, and the stand-in is deleted. Blocked on a tag (D18). As of 2026-10-08 the
-   owner's `main` builds (D34 closed) but does not yet re-check hashes in the guest (D8),
-   fail on a failed validation (D22), or speak the template's command line and result file
-   (C3, C4). Two proposal branches do all of that and were tried in a full build (job 4245);
-   the swap waits on the owner merging and tagging them.
+3. **Done 2026-10-19.** The default runner is the tagged `package-runner` 1.0.0 release, with
+   its SHA-256 committed beside it (D18 closed). The release contains the two proposal
+   branches tried in jobs 4245, 4408 and 4441. The stand-in was kept, not deleted, for the
+   harness's forced-exit tests.

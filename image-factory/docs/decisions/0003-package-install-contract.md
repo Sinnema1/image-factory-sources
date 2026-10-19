@@ -940,6 +940,51 @@ branch in `package-runner`: `add-publish` (`8c2dc2f`, 2026-10-07), which adds a 
 configuration and a pipeline job for it. Its publish command is a placeholder (`echo`) and
 the branch is unmerged, so there is still no release. D38 showed again, as year `12126`.
 
+### The 1.0.0 release becomes the default (2026-10-19)
+
+The owner tagged `package-runner` `1.0.0` on `main` (`7d49d76`) on 2026-10-16 and published
+it to the share with GoReleaser, under `artifacts/package-runner/1.0.0/`. It closes D18.
+
+**What it contains** (OBSERVED 2026-10-19, read by content): everything in
+`proposal/build-contract`, which already held `proposal/validation-evidence`; the owner's
+release pipeline and registry validator from `add-publish`; and builds for macOS and Linux.
+It was merged through a `temp-merge` branch, so git history does not show the proposal
+branches as merged, but no line of them is missing. Compared with `build-contract`, the only
+removals are outdated build-tag lines. Built from the tag, it builds for Windows and every
+test package passes.
+
+**What the build uses.** The Windows binary was copied from the share and checked against
+the release's own checksums file (`92daa2c332ac5d44c01eaec5772898dbb8b9c9f83e08a55bb109f981aabb3647`),
+and its hash committed in `packer/package-runner/`. `stage-packages.sh` defaults to it, so
+`PACKAGE_RUNNER` no longer needs to be set. The trial build (`0.0.0-trial.2`) was removed.
+
+**The binary is not committed.** Site B's GitLab refuses `.exe` files. So the repository
+holds the release's identity, `package-runner.exe.sha256` and `package-runner.exe.source`
+(where it is published), and `stage-packages.sh` copies the binary from there into
+`build/package-runner/` before checking it against the committed hash. This is how the build
+already treats packages and ISOs. A release overwritten in the store no longer matches and
+stops the build. The share becomes a build dependency for the engine as it already was for
+real packages; a workstation sets `PACKAGE_RUNNER_SOURCE` to a local copy. The trial build was
+committed between 2026-10-07 and 2026-10-19 and stays in this repository's history, so moving
+the repository to Site B (STORY-30) must be a fresh import of the current files: a push rule
+that refuses `.exe` files checks every commit pushed. OBSERVED 2026-10-19 in job 4608
+(`d34149f5`): the release was copied from the share, matched the committed hash, and installed
+and validated the fixture in a full build.
+
+**The stand-in is kept, for one purpose.** The release cannot be made to fail on demand, and
+the stand-in can: it is the only way to exercise the build's handling of exit codes 10, 11,
+12 and 3010 without a broken package. The `staging-harness` job selects it when
+`HARNESS_FORCE_EXIT_CODE` is set; nothing else uses it.
+
+**Known defect, accepted for the lab (D39).** The release reports its version as `dev`, so
+`runner_version` in `install-result.json` says `dev`. The SHA-256 identifies the binary
+instead: every build records it in `package-stage-*.json`, checked against the committed
+value. To be fixed by the owner before Site B.
+
+**Proved in a full build.** OBSERVED 2026-10-19 in job 4592 (`e4c28b78`), a full build with no variables set: the release's hash matched, the fixture installed (exit 0) and validated before and after the restart step (verify exit 0), and cleanup passed. A real package (PuTTY) has not been
+installed with the release itself; the trial build that did so in jobs 4408 and 4441 holds the
+same code. D38 is still present: the console year was `19196`.
+
 ## What must be fixed before this flow can be exercised (OBSERVED, 2026-09-22)
 
 None of these is a design problem. They are all defects or omissions, listed so the owners

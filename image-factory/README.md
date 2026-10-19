@@ -38,10 +38,19 @@ integration detail (including the verified defect register for `ci-platform`,
 - [x] ISO qualification: one record per ISO, a two-stage hash chain, and the build reading its ISO paths from the records (`packer/sources/`, `scripts/runner/validate-iso-metadata.sh`, `verify-iso.sh`, `verify-datastore-iso.sh`; [ADR 0004](docs/decisions/0004-iso-library-and-qualification.md))
 
 ### In Progress
-- [ ] Software install before generalization and sealing. [ADR 0003](docs/decisions/0003-package-install-contract.md) is accepted (2026-09-28) — the `package-runner` lock file is the contract, and this repository only transfers it and invokes the runner — This repository's side is written (STORY-04, 2026-10-01): the build verifies the lock and the runner binary against committed hashes, uploads them with the package files, runs the install, downloads its evidence before failing on a bad exit code, restarts when asked and runs a post-restart check. It runs against a fixture package and a **stand-in** for `package-runner` (`packer/fixtures/package-runner/`), and was proved in CI on 2026-10-01 (one full build, and one harness run per failure and restart exit code). The real engine waits on STORY-05, and real packages on `runner-image`'s `download-packages`
+Nothing in the lab: the proof of concept was closed out on 2026-10-19. What it proved, what it
+accepted only as a lab, and what Site B must change are in
+[docs/lab-closeout.md](docs/lab-closeout.md).
+
+- [x] Software install: the released `package-runner` 1.0.0 installs and validates in every
+  build, and a real package (PuTTY) was installed end to end (ADR 0003).
+- [x] Retention: each published master's evidence is kept on the share, and masters are
+  listed and retired deliberately (ADR 0005, STORY-18).
 
 ### Blocked
-See the Blocked table in [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for the current list and owners. In summary: an end-to-end package install needs the agreed contract implemented and defects cleared in the adjacent repositories (STORY-05, `runner-image`); and publishing needs the seal step (STORY-03, in progress: the build completes first-run setup since 2026-10-02; the seal step itself is not built). ISO stage 2 is no longer blocked: it runs in CI as the manual `verify-iso-datastore` job since `runner-image` `0.1.0` (2026-09-30).
+See the Blocked table in [AGENT_HANDOFF.md](AGENT_HANDOFF.md). The one substantive item is the
+MCS catalog proof: no desktop has been made from a master, because Example Labs has no Citrix
+site.
 
 ### Not started
 - [x] The seal step and publishing the master (STORY-19, STORY-03, STORY-11): done 2026-10-08. The manual job `packer-build-publish` produces a sealed master VM with a versioned snapshot and an image-reference record (ADR 0005). Background, kept as written: Sealing is decided: a domain-joined master, no sysprep, for Citrix MCS ([ADR 0002](docs/decisions/0002-master-image-identity-and-sealing.md), accepted 2026-10-01). The build completes Windows first-run setup and sets the time zone to UTC (done 2026-10-02), and the seal step is built and proved (2026-10-08, `packer/provisioners/Invoke-ImageSeal.ps1`), off unless the build is run with `SEAL_IMAGE=true`; the versioned snapshot and the masters OU (deferred in the lab) remain. The publish form is a master VM with a versioned snapshot ([ADR 0005](docs/decisions/0005-publish-form-and-image-identity.md)).
@@ -69,7 +78,7 @@ See the Blocked table in [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for the current li
 | **vSphere discovery**            | Read-only scripts to discover vCenter inventory. Workstation only, run by hand.              | `infrastructure/scripts/`                          |
 | **VM cleanup**                   | Deletes one named Packer test VM from disk, and its build floppy image. Workstation only (needs `pwsh` and PowerCLI).     | `scripts/windows/Remove-PackerTestVm.ps1`, `make clean-vm`, `make list-vms` |
 | **Evidence**                    | Build logs, validation results, provenance and an index, with a fail-closed secret scan. See [docs/evidence.md](docs/evidence.md). | `evidence/`, `scripts/runner/collect-evidence.sh` |
-| **Software install (fixture)**  | Verifies the lock, the `package-runner` binary and the package files on the runner, uploads them, runs the install in the guest and collects its evidence (ADR 0003). Today the package is a fixture and the guest binary a stand-in; the runner-side staging is the real `download-packages` since 2026-10-07. A trial build of the real `package-runner` is in `packer/fixtures/package-runner/`, off by default; it installed the fixture in a full build on 2026-10-07, and a real package, PuTTY 0.83.0 from the package share, on 2026-10-12 with the lock in `packer/software/` (ADR 0003, "First real package installed"). | `packer/fixtures/`, `scripts/runner/stage-packages.sh` |
+| **Software install**  | Verifies the lock, the `package-runner` binary and the package files on the runner, uploads them, runs the install in the guest and collects its evidence (ADR 0003). By default the package is a fixture; the runner-side staging is the real `download-packages` since 2026-10-07. Since 2026-10-19 the guest engine is the `package-runner` 1.0.0 release, pinned by hash in `packer/package-runner/` and copied from the share at build time; a trial build of it installed the fixture on 2026-10-07 and a real package, PuTTY 0.83.0 from the package share, on 2026-10-12 with the lock in `packer/software/` (ADR 0003, "First real package installed"). The stand-in is kept only for the harness's forced-exit tests. | `packer/fixtures/`, `scripts/runner/stage-packages.sh` |
 | **Decisions**                   | Architecture decision records.                                                                | `docs/decisions/`                                  |
 
 ### Diagnostics

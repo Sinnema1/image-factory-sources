@@ -170,7 +170,7 @@ variable "package_artifact_root" {
 
 variable "package_runner" {
   type        = string
-  description = "Runner path of the package-runner binary, or of the stand-in script until a release exists."
+  description = "Runner path of the package-runner binary (the release in packer/package-runner/), or of the stand-in script used by the harness's forced-exit tests."
 }
 
 variable "execution_id" {
@@ -264,7 +264,8 @@ local "guest_package_runner" {
 }
 
 # The agreed command line (ADR 0003, C3), minus the subcommand. A .ps1 is the
-# stand-in in packer/fixtures/package-runner/ and is started in its own
+# stand-in in packer/fixtures/package-runner/, which only the harness's
+# forced-exit tests use now, and is started in its own
 # powershell.exe, so it behaves like the executable it stands in for: its exit
 # code arrives in $LASTEXITCODE and nothing it does can end the calling block.
 #

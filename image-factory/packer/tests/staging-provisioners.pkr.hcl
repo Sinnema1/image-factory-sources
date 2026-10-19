@@ -32,7 +32,9 @@
 # package-runner end with that code, and the run must fail AFTER
 # install-result-harness.json has been downloaded. 3010 installs, then
 # RESTARTS THE VM, runs the post-restart check and must pass. This works only
-# while package_runner is the stand-in (packer/fixtures/package-runner/).
+# with the stand-in (packer/fixtures/package-runner/), because the release
+# cannot be made to fail on demand; the staging-harness job selects the
+# stand-in itself when HARNESS_FORCE_EXIT_CODE is set.
 #
 # Seal test: -var seal_image=true runs the seal's Prepare stage and then starts
 # its Final stage, as the template's shutdown command does. THE VM IS SEALED
@@ -185,7 +187,8 @@ local "guest_package_runner" {
 }
 
 # The agreed command line (ADR 0003, C3), minus the subcommand. A .ps1 is the
-# stand-in in packer/fixtures/package-runner/ and is started in its own
+# stand-in in packer/fixtures/package-runner/, which only the forced-exit
+# tests use now, and is started in its own
 # powershell.exe, so it behaves like the executable it stands in for: its exit
 # code arrives in $LASTEXITCODE and nothing it does can end the calling block.
 #

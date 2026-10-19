@@ -9,18 +9,17 @@ windows-11-lab.lock.yaml          one package: PuTTY 0.83.0, a machine-wide MSI
 windows-11-lab.lock.yaml.sha256   its expected SHA-256: the trust anchor, and the sidecar
 ```
 
-Nothing uses it by default. First installed in a full build on 2026-10-12 (job 4408). A build installs it when the pipeline is started with all three
-of these variables:
+Nothing uses it by default. First installed in a full build on 2026-10-12 (job 4408). A build installs it when the pipeline is started with these two
+variables:
 
 | Variable | Value |
 |---|---|
 | `PACKAGE_LOCK` | `packer/software/windows-11-lab.lock.yaml` |
 | `PACKAGE_SOURCE_ROOT` | `/mnt/image-factory/package-content` |
-| `PACKAGE_RUNNER` | `packer/fixtures/package-runner/package-runner.exe` |
 
-The third is required: the stand-in `package-runner.ps1` only runs PowerShell packages and
-cannot install an MSI. The executable is a trial build, not a release (ADR 0003, "Trial of a
-`package-runner` build").
+The install engine is the `package-runner` 1.0.0 release, the default since 2026-10-19
+([`../package-runner/`](../package-runner/README.md)). Before that a third variable,
+`PACKAGE_RUNNER`, selected a trial build of it; jobs 4408 and 4441 below used that trial build.
 
 ## The lock
 

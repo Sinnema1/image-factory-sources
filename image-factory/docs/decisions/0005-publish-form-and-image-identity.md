@@ -326,9 +326,139 @@ Not settled here, and recorded so it is not lost:
   Desktops made by MCS have their own accounts and are unaffected, but the older master
   would show a broken trust if it were started. ADR 0002, requirement 4.
 - **Evidence expires before the master does.** Job artifacts last 30 days. The record names
-  the job that holds them. Keeping them is STORY-18's.
+  the job that holds them. Keeping them is STORY-18's. **Closed 2026-10-19:** see "Retention
+  and the evidence store".
 - **Nothing removes an older master.** Versioned names never collide, so masters
-  accumulate until someone removes them. Also STORY-18's.
+  accumulate until someone removes them. Also STORY-18's. **Closed 2026-10-19:** `masters.sh
+  retire`, played by a person.
+
+## Retention and the evidence store (written 2026-10-12, STORY-18)
+
+This section builds the retention rule decided above ("Published masters are retained by
+count, and removed deliberately") and closes the two items the publish step left open:
+evidence that expires before the master does, and nothing removing an older master. It was
+written on 2026-10-12 and proved in CI on 2026-10-19 ("Proved in CI" below).
+
+### The evidence store
+
+A published master's evidence is copied, once, to a store outside CI:
+
+```text
+/mnt/image-factory/artifactory/image-factory-group/image-factory/masters/
+  <version>/                  the evidence folder of the publish job
+  <version>.retired.json      added when that master is retired
+```
+
+- **Where, and why there.** The share is where this organisation already publishes build
+  outputs (`ci-platform` writes container images and scripts under the same
+  root). The path and write access were agreed with the share's owner on 2026-10-12, and
+  OBSERVED the same day: the folder above `masters` is visible and writable from this
+  project's jobs, on a read-write `cifs` mount. GitLab's package registry was the other
+  candidate. It is enabled, and a job can list it with certificate checks on when it uses
+  the runner's own certificate authority (the image's does not trust GitLab). Uploading
+  was not tried. The share was kept (decided 2026-10-12 by the image-build owner): it was agreed
+  and built, it is how build outputs are already published here, and the store sits behind
+  one script, so moving later changes `evidence-store.sh` and nothing else.
+- **Evidence outlives the master** (decided 2026-10-12 by the image-build owner). The decision above
+  said evidence is kept "for as long as that master exists". That is the minimum, and the
+  wrong end to stop at: desktops made from a master outlive it, and questions about an
+  image come after it has been used. Retiring a master therefore never removes its
+  evidence. Nothing in this repository deletes from the store.
+- **Written once.** `evidence-store.sh put` refuses a version that is already there. It
+  checks the folder first (the record is valid and for this version, `index.json` is the
+  index the record names, every file matches the index), copies to `<version>.partial`,
+  checks the copy the same way, and only then renames it. The share cannot enforce
+  write-once, so this is a control in the script, not in the storage.
+- **What is copied.** The files the index lists, `index.json`, `SHA256SUMS`, the record and
+  the lookups made from it. Nothing else.
+- **Published means stored.** `packer-build-publish` gained a ninth step that stores its own
+  evidence. A master is listed as published only when its record is in the store. If the
+  ninth step fails, the record is removed and the build is not published, as for any
+  failure after the seal. The image itself would be sound, so this costs a rebuild; it is
+  the price of there being no second way into the store (next item).
+- **Earlier masters are not in the store** (decided 2026-10-12 by the image-build owner). The two
+  masters that existed before this change, `2026.10.09-4362` and `2026.10.12-4441`, were
+  published without it. A job to store an earlier publish job's evidence from its artifacts
+  was written and removed the same day: OBSERVED 2026-10-12 (jobs 4489 and 4492), GitLab
+  answers HTTP 404 when a job asks for another job's artifacts with its own token, for
+  jobs whose artifacts exist. INFERRED: this instance does not allow a job token on that
+  endpoint. The alternatives were a project access token, which is a credential to keep,
+  or a copy made by hand from a workstation; neither was thought worth it for two proof
+  images. So `masters.sh list` shows those two as unpublished VMs, the first master
+  published after this change is the first it counts, and the two older VMs are removed by
+  hand when they are no longer wanted. Their evidence is in job artifacts until about
+  2026-11-08 and 2026-11-11; job 4441's archive is also attached to STORY-17.
+
+### Listing and the retention rule
+
+`masters.sh list` joins the store with vCenter. Each version is looked up by the recorded
+instance UUID and snapshot id, the same lookup the publish step uses, and given one state.
+
+| State | Meaning |
+|---|---|
+| `current`, `previous` | The newest masters built from the default branch, up to `MASTER_RETAIN_COUNT` (2). Kept |
+| `beyond-retention` | Older than the rule keeps. May be retired |
+| `test` | Built from another branch. Never counted as current or previous. May be retired at any time |
+| `retired` | Removed by `masters.sh retire`. Its evidence remains |
+| `missing` | In the store, but vCenter has no VM with that instance UUID |
+| `mismatch` | vCenter returns something the record does not describe: renamed, moved, powered on, or a different snapshot |
+
+A VM named like a master with no record in the store is listed separately as unpublished.
+A master outside the agreed folder, `/dc-01/vm/Projects/image-factory`, is flagged.
+That folder is this project's choice; no other team has been asked to agree it.
+
+### Retiring a master
+
+`masters.sh retire`, played by a person through the `master-retire` job. A build never
+calls it. It is a dry run unless told to execute, and it refuses unless all of these hold:
+
+- the version is `beyond-retention` or `test`;
+- its record resolves exactly in vCenter and the VM is powered off;
+- no floppy image is attached (STORY-02);
+- a catalog check is supplied.
+
+**The catalog check in the lab is a person's statement.** The rule above is to check the
+catalogs before removing a master. Example Labs has no Citrix site, so there is nothing to
+query. `CATALOG_USE_STATEMENT` must say how the person knows no catalog uses the master;
+the statement and the GitLab login of whoever played the job are written into the
+retirement record. Without it nothing is removed. When a site exists, a query replaces the
+statement at the same point in the script. DEFERRED until then.
+
+On success the VM, its snapshot and its files are removed, vCenter is asked again to
+confirm the instance UUID is gone, the VM's datastore folder is listed for anything left
+behind (names only), and `master-retired-<version>.json` is written to the job's evidence
+and beside the version in the store.
+
+`Remove-PackerTestVm.ps1` is unchanged and still refuses any name without `packer-`. The
+decision above expected that script to be extended; a separate, stricter path was built
+instead, because removing a master needs checks a test VM does not.
+
+### Proved in CI (2026-10-19)
+
+| Job | Ref | What it showed |
+|---|---|---|
+| 4500 | branch | `masters-list` reads an empty store and lists the two older masters as not published |
+| 4643 | branch | A test master published from the branch; step 9 stored 21 files under `masters/2026.10.19-4643/`, checked after the copy |
+| 4644 | branch | `masters-list` listed it as `test` |
+| 4645 | branch | `master-retire` dry run: named the VM by instance UUID, the snapshot, the datastore files and where the evidence stays; removed nothing |
+| 4647 | branch | `master-retire` executed (with `MASTER_RETIRE_FROM_BRANCH=true`): VM, snapshot and files removed; vCenter confirmed the UUID gone; nothing left in the datastore folder; `master-retired-2026.10.19-4643.json` written to the job and beside the evidence in the store |
+| 4648 | branch | `masters-list` listed it as `retired`, its evidence still in the store |
+| 4655 | `main` (`ecfde3b9`) | The first master published from `main` with its evidence in the store: `image-master-2026.10.19-4655`, snapshot `sealed-2026.10.19-4655` (`snapshot-40038`), 21 files stored. Also the first published master built with the released `package-runner` |
+| 4656 | `main` | `masters-list` listed `2026.10.19-4655` as `current` and `2026.10.19-4643` as `retired` |
+| 4657 | `main` | `master-retire` on `2026.10.19-4655` refused: "is the current master. The retention rule keeps it; it is not removed." Nothing was removed |
+
+All OBSERVED 2026-10-19. The refusal without a catalog statement, and the refusals for a
+powered-on master, an attached floppy image and a run from a branch, were shown on the
+workstation against a fake store and a fake `govc` (36 cases, 2026-10-12), not in CI. A
+`previous` master and a `beyond-retention` one have not yet existed: the store holds one
+master from `main`.
+
+### Not settled
+
+- **The count.** Two is this project's choice, to confirm with the Citrix stakeholders.
+- **The real catalog check.** A Citrix query, when there is a site.
+- **Signing.** The evidence is verifiable by hash, from the record down. It is not signed.
+- **How long evidence is kept.** Indefinitely, for now. Nothing removes it.
 
 ## Alternatives considered
 

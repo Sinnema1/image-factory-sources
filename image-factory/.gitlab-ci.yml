@@ -237,6 +237,21 @@ runner-capabilities:
       if [ -d "$package_share" ]; then echo "share path present: $package_share"; else echo "share path MISSING: $package_share"; fi
       package_file="$package_share/putty/0.83.0/putty-0.83-installer.msi"
       if [ -f "$package_file" ]; then echo "package file present: $package_file"; else echo "package file MISSING: $package_file"; fi
+    - |
+      echo "== where a master's evidence could be kept (STORY-18) =="
+      # The evidence store is a folder on the share (ADR 0005). This says
+      # whether this job can see it and expects to write there. Nothing is
+      # written. test -w is what the kernel believes; a share can
+      # still refuse the write, so "writable" here means worth trying, and
+      # "not writable" means no.
+      for path in /mnt/image-factory /mnt/image-factory/artifactory /mnt/image-factory/artifactory/image-factory-group /mnt/image-factory/images; do
+        if [ ! -d "$path" ]; then echo "  MISSING       $path"
+        elif [ -w "$path" ]; then echo "  writable      $path"
+        else echo "  not writable  $path"; fi
+      done
+      # Mount point, mount options and filesystem type only: the source and
+      # the superblock options can name a server account.
+      awk '$5 ~ "^/mnt/" { for (i = 7; i <= NF; i++) if ($i == "-") { print "  mount " $5 " (" $6 ") " $(i + 1); break } }' /proc/self/mountinfo || true
     - 'echo "runner user: $(id -un)"'
     - |
       echo "== outbound connectivity =="
@@ -392,7 +407,11 @@ packer-build-diagnostic:
 # leaves no record, and an image with no record is not published.
 #
 # Not played for a routine check: use packer-build-diagnostic for that. Each
-# run of this job leaves a new master VM in vSphere, which nothing removes.
+# run of this job leaves a new master VM in vSphere. A build never removes an
+# older one; that is master-retire, played by a person (STORY-18).
+#
+# Its last step copies the evidence to the evidence store on the share, so the
+# job shares a resource group with master-retire, which writes there too.
 #
 # It refuses to run from any branch but the default one. To prove a change to
 # the publish step before merging it, play the job on the branch with
@@ -401,6 +420,7 @@ packer-build-publish:
   stage: build
   needs: ["packer-validate"]
   timeout: 2h
+  resource_group: master-evidence-store
   extends:
     - .evidence
     - .manual
@@ -420,6 +440,57 @@ packer-build-publish:
     - !reference [.install_vars_file, script]
     - make init
     - make publish
+
+# --- Published masters: list and retire (STORY-18, ADR 0005) -----------------
+#
+# Two manual jobs for what happens to a master after it is published. Neither
+# builds anything, so neither needs packer-validate; `needs: []` lets
+# them be played as soon as the pipeline exists.
+#
+# MASTER_FOLDER is the agreed inventory folder for masters. masters.sh flags a
+# master found anywhere else.
+.masters:
+  stage: build
+  needs: []
+  timeout: 30m
+  variables:
+    MASTER_FOLDER: "/dc-01/vm/Projects/image-factory"
+  extends:
+    - .evidence
+    - .manual
+
+# Lists every version in the evidence store with its state in vCenter:
+# current, previous, beyond-retention, test, retired, missing or mismatch, and
+# any VM named like a master that has no record. Changes nothing.
+masters-list:
+  extends: .masters
+  script:
+    - bash scripts/runner/require-env.sh VCENTER_HOST VCENTER_USERNAME VCENTER_PASSWORD
+    - bash scripts/runner/masters.sh list
+
+# Removes one master: the VM, its snapshot and its files. Its evidence stays in
+# the store. Play it with:
+#   RETIRE_VERSION          the image version, for example 2026.10.08-4330
+#   CATALOG_USE_STATEMENT   how you know no catalog uses this master. Recorded
+#                           with your GitLab login. Required: Example Labs has no
+#                           Citrix site to ask, so a person answers for it.
+#   RETIRE_EXECUTE          true to remove. Without it the job is a dry run
+#                           that prints what it would remove.
+#   RETIRE_REASON           optional; the default is taken from the state.
+# The script refuses the current and the previous master, and anything whose
+# record does not resolve exactly in vCenter. From a branch it also needs
+# MASTER_RETIRE_FROM_BRANCH=true, to prove a change to this step before merge.
+master-retire:
+  extends: .masters
+  resource_group: master-evidence-store
+  script:
+    - bash scripts/runner/require-env.sh RETIRE_VERSION VCENTER_HOST VCENTER_USERNAME VCENTER_PASSWORD
+    - |
+      if [ "${RETIRE_EXECUTE:-}" = "true" ]; then
+        bash scripts/runner/masters.sh retire --version "${RETIRE_VERSION}" --execute
+      else
+        bash scripts/runner/masters.sh retire --version "${RETIRE_VERSION}"
+      fi
 
 # Fast loop for the software install provisioners. Runs the same steps as the
 # build against an already running, retained build VM, so provisioner details
@@ -459,7 +530,15 @@ staging-harness:
         ADMIN_SERVICE_ACCOUNT
         ADMIN_SERVICE_ACCOUNT_PASSWORD
         AD_NETBIOS_DOMAIN
-    - bash scripts/runner/stage-packages.sh --emit-var-file build/package-vars.pkrvars.hcl
+    # The release cannot be made to fail on demand, so a forced exit code
+    # needs the stand-in. Selected here, before staging, so the hash check and
+    # the upload are of the binary that actually runs.
+    - |
+      if [ -n "${HARNESS_FORCE_EXIT_CODE:-}" ]; then
+        export PACKAGE_RUNNER=packer/fixtures/package-runner/package-runner.ps1
+        echo "HARNESS_FORCE_EXIT_CODE is set: using the stand-in package-runner, which can be forced to fail"
+      fi
+      bash scripts/runner/stage-packages.sh --emit-var-file build/package-vars.pkrvars.hcl
     - export PKR_VAR_winrm_password="${ADMIN_SERVICE_ACCOUNT_PASSWORD}"
     - |
       winrm_user="${AD_NETBIOS_DOMAIN}$(printf '\134')${ADMIN_SERVICE_ACCOUNT}"

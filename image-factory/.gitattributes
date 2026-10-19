@@ -20,3 +20,5 @@ Makefile text eol=lf
 packer/fixtures/** -text
 # The catalog lock is hashed the same way.
 packer/software/** -text
+# So is the package-runner release's committed hash.
+packer/package-runner/** -text

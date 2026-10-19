@@ -18,11 +18,12 @@
     than the owner's tools in one way, on purpose: a package with no sha256 is
     an integrity failure, not a skipped check.
 
-    RETIRE IT when a tagged package-runner release meets C1-C4: point the
-    PACKAGE_RUNNER variable of scripts/runner/stage-packages.sh at the release
-    binary, commit its SHA-256 beside it, and delete this folder. Do not extend
-    it to real packages: it runs the "powershell" handler and the "file"
-    validator and nothing else, and anything else in a lock is a failure.
+    NO LONGER THE DEFAULT. Since 2026-10-19 builds use the package-runner 1.0.0
+    release in packer/package-runner/. This script is kept for one purpose: the
+    staging harness's forced-exit tests (HARNESS_FORCE_EXIT_CODE), because the
+    release cannot be made to fail on demand. Do not extend it to real
+    packages: it runs the "powershell" handler and the "file" validator and
+    nothing else, and anything else in a lock is a failure.
     install.arguments and install.workingDirectory are not read.
 
     Commands:

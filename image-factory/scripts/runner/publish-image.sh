@@ -23,10 +23,19 @@
 #   7. Continuity: the VM is looked up by the recorded instance UUID and the
 #      snapshot by the recorded id, twice, and both must match the record.
 #   8. The record and the lookups are scanned for secrets.
+#   9. The evidence is copied to the evidence store (STORY-18), where it
+#      outlives the job's artifacts and the master itself. A master is listed
+#      as published (masters.sh) only once it is there.
 #
 # A failure after step 3 leaves a sealed VM with a versioned name and no
 # record. That is the correct outcome: it is not a published master, and it is
 # removed by hand.
+#
+# A failure at step 9 is treated the same way, although the image itself is
+# sound: published means stored, and nothing else can put the evidence in the
+# store afterwards (a job cannot download another job's artifacts with its own
+# token on this GitLab; OBSERVED 2026-10-12, HTTP 404). So the record is
+# removed, and the cost of a share that could not be written is one rebuild.
 #
 # Usage:
 #   publish-image.sh
@@ -36,7 +45,7 @@
 # change to this step before it merges; the record's build.ref then names the
 # branch, which marks the image as a test.
 #
-# Optional: IMAGE_NAME_PREFIX (default wds-master). Needs everything
+# Optional: IMAGE_NAME_PREFIX (default image-master). Needs everything
 # build-diagnostic.sh needs, plus govc.
 
 set -uo pipefail
@@ -58,7 +67,7 @@ export GOVC_INSECURE=true
 step() { printf '\n=== Publish %s\n' "$1"; }
 
 # --- 1. Version and names. ---
-step "1/8: version and names"
+step "1/9: version and names"
 
 publish_ref="${CI_COMMIT_REF_NAME:-$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || true)}"
 default_branch="${CI_DEFAULT_BRANCH:-main}"
@@ -69,7 +78,7 @@ if [[ "$publish_ref" != "$default_branch" ]]; then
         "$publish_ref" "$default_branch"
 fi
 
-IMAGE_NAME_PREFIX="${IMAGE_NAME_PREFIX:-wds-master}"
+IMAGE_NAME_PREFIX="${IMAGE_NAME_PREFIX:-image-master}"
 [[ "$IMAGE_NAME_PREFIX" =~ ^[a-z][a-z0-9-]{1,30}$ ]] ||
     fail "IMAGE_NAME_PREFIX must be lower-case letters, digits and '-', starting with a letter."
 
@@ -87,7 +96,7 @@ existing="$(govc find / -type m -name "$VM_NAME")" || fail "vCenter could not be
 printf 'Version:  %s\nVM:       %s\nSnapshot: %s\n' "$VERSION" "$VM_NAME" "$SNAPSHOT_NAME"
 
 # --- 2. The ISO gate. ---
-step "2/8: ISO qualification, datastore copies"
+step "2/9: ISO qualification, datastore copies"
 shopt -s nullglob
 iso_records=("${REPO_ROOT}"/packer/sources/windows/*.json)
 shopt -u nullglob
@@ -98,7 +107,7 @@ for iso_record in "${iso_records[@]}"; do
 done
 
 # --- 3. Build and seal. ---
-step "3/8: build and seal"
+step "3/9: build and seal"
 SEAL_IMAGE=true IMAGE_VM_NAME="$VM_NAME" bash "${SCRIPT_DIR}/build-diagnostic.sh" ||
     fail "the build or its seal failed. Nothing is published."
 
@@ -107,7 +116,7 @@ SEAL_RESULT="${EVIDENCE_DIR}/seal-result-${seal_execution_id}.json"
 [[ -f "$SEAL_RESULT" ]] || fail "the seal result is missing after a passing build: ${SEAL_RESULT}"
 
 # --- 4. Snapshot. ---
-step "4/8: snapshot"
+step "4/9: snapshot"
 vm_paths="$(govc find / -type m -name "$VM_NAME")" || fail "vCenter could not be searched for ${VM_NAME}."
 [[ "$(grep -c . <<<"$vm_paths" || true)" -eq 1 ]] || fail "expected exactly one VM named ${VM_NAME}, found: ${vm_paths:-none}"
 VM_PATH="$vm_paths"
@@ -145,12 +154,12 @@ jq -n \
 printf 'Snapshot taken: %s, id %s, on %s (instance UUID %s)\n' "$SNAPSHOT_NAME" "$SNAPSHOT_ID" "$VM_NAME" "$INSTANCE_UUID"
 
 # --- 5. The last evidence collection. ---
-step "5/8: final evidence index"
+step "5/9: final evidence index"
 bash "${SCRIPT_DIR}/collect-evidence.sh" --evidence-dir "$EVIDENCE_DIR" --outcome success ||
     fail "the final evidence collection failed. Nothing is published."
 
 # --- 6. The record. ---
-step "6/8: image reference"
+step "6/9: image reference"
 bash "${SCRIPT_DIR}/image-reference.sh" write \
     --version "$VERSION" --vm-path "$VM_PATH" \
     --snapshot-name "$SNAPSHOT_NAME" --snapshot-id "$SNAPSHOT_ID" --instance-uuid "$INSTANCE_UUID" \
@@ -168,7 +177,7 @@ unpublish() {
 }
 
 # --- 7. Continuity. ---
-step "7/8: continuity lookups"
+step "7/9: continuity lookups"
 for attempt in 1 2; do
     bash "${SCRIPT_DIR}/image-reference.sh" lookup --record "$RECORD" --out "${EVIDENCE_DIR}/image-lookup-${attempt}.json" ||
         unpublish "Lookup ${attempt} did not match the record."
@@ -178,9 +187,14 @@ done
 printf 'Continuity: two lookups by instance UUID and snapshot id returned the same VM and snapshot.\n'
 
 # --- 8. Secret scan of the record and the lookups. ---
-step "8/8: secret scan of the record and lookups"
+step "8/9: secret scan of the record and lookups"
 bash "${SCRIPT_DIR}/collect-evidence.sh" --evidence-dir "$EVIDENCE_DIR" ||
     unpublish "The record and lookups did not pass the evidence check."
+
+# --- 9. The lasting copy of the evidence. ---
+step "9/9: evidence store"
+bash "${SCRIPT_DIR}/evidence-store.sh" put --version "$VERSION" --evidence-dir "$EVIDENCE_DIR" ||
+    unpublish "The evidence could not be copied to the evidence store."
 
 printf '\nPublished: %s, snapshot %s (%s), version %s\n' "$VM_NAME" "$SNAPSHOT_NAME" "$SNAPSHOT_ID" "$VERSION"
 printf 'Image reference: %s\n' "$RECORD"
